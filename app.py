@@ -1,38 +1,33 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import os  # 파일이 창고에 잘 있는지 확인하기 위한 기능
 
 # 웹페이지 기본 설정
 st.set_page_config(page_title="의약품 창고 및 주문 분석 시스템", layout="wide")
 
 st.title("📊 의약품 창고 및 주문 통합 분석 시스템")
-st.write("제품 출고 리스트와 현재 재고 엑셀 파일을 올리면 자동으로 분석을 시작합니다.")
+st.write("깃허브 창고에 저장된 최신 데이터를 자동으로 불러와 분석하는 전광판입니다.")
 st.markdown("---")
 
-# 파일 업로드 화면 구성 (좌우 2개 칸으로 나눔)
-col1, col2 = st.columns(2)
+# 📌 [사장님 확인!] 깃허브 창고에 올릴 엑셀 파일 이름을 여기에 똑같이 적어주세요.
+# 파일 확장자(.xlsx 또는 .xls 또는 .csv)도 정확하게 맞춰야 합니다.
+ORDER_FILE = "출고데이터.xlsx"
+INVENTORY_FILE = "재고데이터.xlsx"
 
-with col1:
-    st.subheader("📦 1. 출고 데이터 업로드")
-    order_file = st.file_uploader("제품 출고 리스트 파일 (.xls, .xlsx, .csv)", type=["xls", "xlsx", "csv"], key="order")
-
-with col2:
-    st.subheader("🏢 2. 재고 데이터 업로드")
-    inventory_file = st.file_uploader("현재 재고 파일 (.xls, .xlsx, .csv)", type=["xls", "xlsx", "csv"], key="inventory")
-
-# 안전하게 파일 읽는 함수
-def load_data(file):
-    if file.name.endswith('.csv'):
-        return pd.read_csv(file)
+# 안전하게 파일 읽는 함수 (문자열 경로를 인식하도록 수정)
+def load_data(file_path):
+    if file_path.endswith('.csv'):
+        return pd.read_csv(file_path)
     else:
-        return pd.read_excel(file)
+        return pd.read_excel(file_path)
 
-# 두 파일이 모두 업로드되었을 때 분석 시작
-if order_file and inventory_file:
+# 두 파일이 모두 깃허브 창고에 존재할 때 자동으로 분석 시작
+if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     try:
-        with st.spinner("🔄 데이터를 정밀 분석 중입니다. 잠시만 기다려 주세요..."):
-            df_orders = load_data(order_file)
-            df_inventory = load_data(inventory_file)
+        with st.spinner("🔄 창고에서 최신 데이터를 가져와 정밀 분석 중입니다. 잠시만 기다려 주세요..."):
+            df_orders = load_data(ORDER_FILE)
+            df_inventory = load_data(INVENTORY_FILE)
             
             current_date = datetime.now()
             
@@ -118,6 +113,7 @@ if order_file and inventory_file:
                 st.info("✅ 3개월 이상 창고에 묶여 있는 장기 체화 재고가 없습니다.")
 
     except Exception as e:
-        st.error(f"❌ 파일 분석 중 오류가 발생했습니다. 올바른 양식의 엑셀 파일인지 확인해 주세요. 오류 내용: {e}")
+        st.error(f"❌ 파일 분석 중 오류가 발생했습니다. 파일 양식과 헤더(컬럼명)를 확인해 주세요. 오류 내용: {e}")
 else:
-    st.info("💡 왼쪽에 '제품 출고 리스트', 오른쪽에 '현재 재고' 파일을 모두 업로드해 주시면 자동으로 분석이 시작됩니다.")
+    st.warning("📢 깃허브 창고에 데이터 파일이 없거나 이름이 일치하지 않습니다.")
+    st.info(f"💡 현재 창고에 **'{ORDER_FILE}'** 파일과 **'{INVENTORY_FILE}'** 파일이 모두 올라와 있어야 자동으로 화면이 켜집니다.")
