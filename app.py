@@ -37,8 +37,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
         st.success(f"✅ 분석 완료! (기준일자: {current_date.strftime('%Y-%m-%d')})")
         
-        # 3개의 결과를 탭(Tab) 형태로 깔끔하게 분리
-        tab1, tab2, tab3 = st.tabs(["⚠️ 주문시기 및 재고부족 알림", "🚨 유효기간 임박 경고", "📦 장기 미출고 재고"])
+        # 💡 [변경 사항] 4개의 결과를 탭(Tab) 형태로 분리 (4번째 탭 추가)
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "⚠️ 주문시기 및 재고부족 알림", 
+            "🚨 유효기간 임박 경고", 
+            "📦 장기 미출고 재고",
+            "📋 전체 현재 재고"
+        ])
         
         ### [기능 1] 주문 시기 및 재고 부족 ###
         with tab1:
@@ -70,13 +75,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if not has_order_alert:
                 st.info("✅ 주문 시기가 다가왔으나 재고가 부족한 품목이 없습니다. 안전합니다.")
 
-        ### [기능 2] 유효기간 10개월 미만 (★ 유효기간 짧은 순서 정렬 반영) ###
+        ### [기능 2] 유효기간 10개월 미만 ###
         with tab2:
             st.header("▶️ 유효기간 10개월 미만 의약품 목록 (남은 기간이 짧은 순서)")
             limit_10_months = current_date + timedelta(days=30 * 10)
             short_expiry = df_inventory[(df_inventory['유효기간_날짜'] <= limit_10_months) & (df_inventory['재고수량'] > 0)]
 
-            # 💡 [수정된 부분] 유효기간 날짜 기준으로 오름차순 정렬 (유효기간이 가장 임박한 것이 맨 위로 옴)
+            # 유효기간 날짜 기준으로 오름차순 정렬
             short_expiry = short_expiry.sort_values(by='유효기간_날짜', ascending=True)
 
             if not short_expiry.empty:
@@ -113,6 +118,33 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
             if not has_no_outflow_alert:
                 st.info("✅ 3개월 이상 창고에 묶여 있는 장기 체화 재고가 없습니다.")
+
+        ### 📋 [기능 4] 전체 현재 재고 및 실시간 검색 기능 (★ 신규 추가) ###
+        with tab4:
+            st.header("▶️ 창고 전체 현재 재고 현황")
+            st.write("현재 창고에 등록된 모든 의약품 리스트입니다. 제품명을 입력하면 실시간으로 필터링됩니다.")
+            
+            # 1. 검색창 추가
+            search_term = st.text_input("🔍 의약품 검색 (찾으시는 제품명을 입력하세요)", "")
+            
+            # 데이터 준비 및 날짜 포맷 예쁘게 다듬기
+            df_all_inv = df_inventory.copy()
+            df_all_inv['유효기간_표시'] = df_all_inv['유효기간_날짜'].dt.strftime('%Y-%m-%d')
+            df_all_inv['유효기간_표시'] = df_all_inv['유효기간_표시'].fillna(df_all_inv['유효기간'].astype(str))
+            
+            # 사장님이 요청하신 3가지 항목(제품명, 재고 수량, 유효기간)만 추출 및 이름 변경
+            df_inv_filtered = df_all_inv[['제품명', '재고수량', '유효기간_표시']].copy()
+            df_inv_filtered.columns = ['제품명', '재고 수량 (개)', '유효기간']
+            
+            # 2. 사용자가 검색어를 입력했다면 해당하는 제품만 필터링
+            if search_term:
+                df_inv_filtered = df_inv_filtered[df_inv_filtered['제품명'].str.contains(search_term, case=False, na=False)]
+            
+            # 조회된 결과 품목 개수 안내
+            st.markdown(f"📊 **현재 조회된 품목:** 총 `{len(df_inv_filtered)}`건")
+            
+            # 3. 표 형태로 깔끔하게 출력 (정렬 및 스크롤 기능 자동 포함)
+            st.dataframe(df_inv_filtered, use_container_width=True, hide_index=True)
 
     except Exception as e:
         st.error(f"❌ 파일 분석 중 오류가 발생했습니다. 파일 양식과 헤더(컬럼명)를 확인해 주세요. 오류 내용: {e}")
