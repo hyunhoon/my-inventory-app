@@ -10,12 +10,11 @@ st.title("📊 의약품 창고 및 주문 통합 분석 시스템")
 st.write("깃허브 창고에 저장된 최신 데이터를 자동으로 불러와 분석하는 전광판입니다.")
 st.markdown("---")
 
-# 📌 [사장님 확인!] 깃허브 창고에 올릴 엑셀 파일 이름을 여기에 똑같이 적어주세요.
-# 파일 확장자(.xlsx 또는 .xls 또는 .csv)도 정확하게 맞춰야 합니다.
+# 📌 깃허브 창고에 올릴 엑셀 파일 이름
 ORDER_FILE = "출고데이터.xls"
 INVENTORY_FILE = "재고데이터.xls"
 
-# 안전하게 파일 읽는 함수 (문자열 경로를 인식하도록 수정)
+# 안전하게 파일 읽는 함수
 def load_data(file_path):
     if file_path.endswith('.csv'):
         return pd.read_csv(file_path)
@@ -71,11 +70,14 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if not has_order_alert:
                 st.info("✅ 주문 시기가 다가왔으나 재고가 부족한 품목이 없습니다. 안전합니다.")
 
-        ### [기능 2] 유효기간 10개월 미만 ###
+        ### [기능 2] 유효기간 10개월 미만 (★ 유효기간 짧은 순서 정렬 반영) ###
         with tab2:
-            st.header("▶️ 유효기간 10개월 미만 의약품 목록")
+            st.header("▶️ 유효기간 10개월 미만 의약품 목록 (남은 기간이 짧은 순서)")
             limit_10_months = current_date + timedelta(days=30 * 10)
             short_expiry = df_inventory[(df_inventory['유효기간_날짜'] <= limit_10_months) & (df_inventory['재고수량'] > 0)]
+
+            # 💡 [수정된 부분] 유효기간 날짜 기준으로 오름차순 정렬 (유효기간이 가장 임박한 것이 맨 위로 옴)
+            short_expiry = short_expiry.sort_values(by='유효기간_날짜', ascending=True)
 
             if not short_expiry.empty:
                 for idx, row in short_expiry.iterrows():
