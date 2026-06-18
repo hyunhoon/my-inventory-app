@@ -12,8 +12,8 @@ st.markdown("---")
 
 # 📌 [사장님 확인!] 깃허브 창고에 올릴 엑셀 파일 이름을 여기에 똑같이 적어주세요.
 # 파일 확장자(.xlsx 또는 .xls 또는 .csv)도 정확하게 맞춰야 합니다.
-ORDER_FILE = "출고데이터.xlsx"
-INVENTORY_FILE = "재고데이터.xlsx"
+ORDER_FILE = "출고데이터.xls"
+INVENTORY_FILE = "재고데이터.xls"
 
 # 안전하게 파일 읽는 함수 (문자열 경로를 인식하도록 수정)
 def load_data(file_path):
