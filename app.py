@@ -45,33 +45,42 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             "📋 전체 현재 재고"
         ])
         
-        ### [기능 1] 주문 시기 및 재고 부족 ###
+        ### [기능 1] 주문 시기 및 재고 부족 (★ 예상 주문일 짧게 남은 순 정렬 반영) ###
         with tab1:
-            st.header("▶️ 주문 시기 도래 및 창고 재고 부족 위험")
+            st.header("▶️ 주문 시기 도래 및 창고 재고 부족 위험 (주문 임박 순서)")
             df_orders = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
             df_orders['이전출고일'] = df_orders.groupby(['매출처', '제품명'])['출고일자'].shift(1)
             df_orders['주문간격'] = (df_orders['출고일자'] - df_orders['이전출고일']).dt.days
 
+            # 거래처별 평균 주문 주기 및 최근 출고일 계산
             cycle_info = df_orders.groupby(['매출처', '제품명']).agg(
                 평균주문주기=('주문간격', 'mean'),
                 최근출고일=('출고일자', 'max'),
                 평균주문량=('수량', 'mean')
             ).reset_index()
 
+            # 주문 주기가 계산 가능한 품목만 필터링
+            cycle_info = cycle_info[cycle_info['평균주문주기'].notna() & (cycle_info['평균주문주기'] > 0)].copy()
+            
+            # 💡 [수정된 부분] 예상 주문일과 남은 일수를 미리 계산하여 데이터프레임에 추가
+            cycle_info['예상주문일'] = cycle_info.apply(lambda row: row['최근출고일'] + timedelta(days=int(row['평균주문주기'])), axis=1)
+            cycle_info['남은일수'] = (cycle_info['예상주문일'] - current_date).dt.days
+
+            # 7일 이내로 주문이 예상되는 항목 필터링 후, 남은 일수 기준으로 오름차순 정렬 (0일, 1일 남은 곳이 맨 위로)
+            alert_info = cycle_info[cycle_info['남은일수'] <= 7].copy()
+            alert_info = alert_info.sort_values(by='남은일수', ascending=True)
+
             has_order_alert = False
-            for idx, row in cycle_info.iterrows():
-                if pd.isna(row['평균주문주기']) or row['평균주문주기'] <= 0:
-                    continue
-                next_order_date = row['최근출고일'] + timedelta(days=int(row['평균주문주기']))
-                days_to_order = (next_order_date - current_date).days
+            for idx, row in alert_info.iterrows():
+                inv_stock = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
                 
-                if days_to_order <= 7:
-                    inv_stock = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
-                    if inv_stock < row['평균주문량']:
-                        has_order_alert = True
-                        st.warning(f"**[{row['매출처']}]** {row['제품명']}  \n"
-                                   f"• 예상 주문일: {next_order_date.strftime('%Y-%m-%d')} ({days_to_order}일 남음)  \n"
-                                   f"• 거래처 평균 주문량: **{row['평균주문량']:.0f}개** | 현재 창고 재고: **{inv_stock:.0f}개**")
+                # 창고 재고가 거래처 평균 주문량보다 부족한 경우에만 경고 출력
+                if inv_stock < row['평균주문량']:
+                    has_order_alert = True
+                    st.warning(f"**[{row['매출처']}]** {row['제품명']}  \n"
+                               f"• 예상 주문일: {row['예상주문일'].strftime('%Y-%m-%d')} (**{row['남은일수']}일 남음**)  \n"
+                               f"• 거래처 평균 주문량: **{row['평균주문량']:.0f}개** | 현재 창고 재고: **{inv_stock:.0f}개**")
+                               
             if not has_order_alert:
                 st.info("✅ 주문 시기가 다가왔으나 재고가 부족한 품목이 없습니다. 안전합니다.")
 
@@ -93,7 +102,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 유효기간이 10개월 미만인 품목이 없습니다. 안전합니다.")
 
-        ### [기능 3] 3개월 이상 미출고 (★ 최종 출고일 오래된 순서 정렬 반영) ###
+        ### [기능 3] 3개월 이상 미출고 ###
         with tab3:
             st.header("▶️ 3개월 이상 장기 미출고 의약품 (최종 출고일이 오래된 순서)")
             df_last_out = df_orders.groupby('제품명')['출고일자'].max().reset_index()
@@ -101,7 +110,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
             df_inventory_check = pd.merge(df_inventory, df_last_out, on='제품명', how='left')
             
-            # 💡 [수정된 부분] 최종출고일 기준으로 오름차순 정렬 (출고 기록이 아예 없는 위험 품목을 최상단 배치)
+            # 최종출고일 기준으로 오름차순 정렬 (출고 기록이 아예 없는 위험 품목을 최상단 배치)
             df_inventory_check = df_inventory_check.sort_values(by='최종출고일', ascending=True, na_position='first')
             
             limit_3_months = current_date - timedelta(days=30 * 3)
