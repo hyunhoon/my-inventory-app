@@ -10,7 +10,7 @@ st.title("📊 의약품 창고 및 주문 통합 분석 시스템")
 st.write("깃허브 창고에 저장된 최신 데이터를 자동으로 불러와 분석하는 전광판입니다.")
 st.markdown("---")
 
-# 📌 깃허브 창고에 올릴 엑셀 파일 이름
+# 📌 💡 [수정된 부분] 엑셀 파일 확장자를 .xlsx에서 .xls로 변경
 ORDER_FILE = "출고데이터.xls"
 INVENTORY_FILE = "재고데이터.xls"
 
@@ -45,9 +45,9 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             "📋 전체 현재 재고"
         ])
         
-        ### [기능 1] 주문 시기 및 재고 부족 (★ 예상 주문일 짧게 남은 순 정렬 반영) ###
+        ### [기능 1] 주문 시기 및 재고 부족 (★ 많이 남은 순 정렬 & 하모닐란, 엔커버 제외 반영) ###
         with tab1:
-            st.header("▶️ 주문 시기 도래 및 창고 재고 부족 위험 (주문 임박 순서)")
+            st.header("▶️ 주문 시기 도래 및 창고 재고 부족 위험 (예상주문일 많이 남은 순서)")
             df_orders = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
             df_orders['이전출고일'] = df_orders.groupby(['매출처', '제품명'])['출고일자'].shift(1)
             df_orders['주문간격'] = (df_orders['출고일자'] - df_orders['이전출고일']).dt.days
@@ -62,13 +62,18 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             # 주문 주기가 계산 가능한 품목만 필터링
             cycle_info = cycle_info[cycle_info['평균주문주기'].notna() & (cycle_info['평균주문주기'] > 0)].copy()
             
-            # 💡 [수정된 부분] 예상 주문일과 남은 일수를 미리 계산하여 데이터프레임에 추가
+            # 예상 주문일과 남은 일수 계산
             cycle_info['예상주문일'] = cycle_info.apply(lambda row: row['최근출고일'] + timedelta(days=int(row['평균주문주기'])), axis=1)
             cycle_info['남은일수'] = (cycle_info['예상주문일'] - current_date).dt.days
 
-            # 7일 이내로 주문이 예상되는 항목 필터링 후, 남은 일수 기준으로 오름차순 정렬 (0일, 1일 남은 곳이 맨 위로)
-            alert_info = cycle_info[cycle_info['남은일수'] <= 7].copy()
-            alert_info = alert_info.sort_values(by='남은일수', ascending=True)
+            # 💡 [수정된 부분] 7일 이내 항목 중 '하모닐란'과 '엔커버' 문구가 포함된 제품은 제외
+            alert_info = cycle_info[
+                (cycle_info['남은일수'] <= 7) & 
+                (~cycle_info['제품명'].str.contains('하모닐란|엔커버', na=False))
+            ].copy()
+            
+            # 💡 [수정된 부분] 예상 주문일이 많이 남아있는 순서로 정렬 (내림차순: ascending=False)
+            alert_info = alert_info.sort_values(by='남은일수', ascending=False)
 
             has_order_alert = False
             for idx, row in alert_info.iterrows():
