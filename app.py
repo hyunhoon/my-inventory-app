@@ -24,12 +24,12 @@ def load_data(file_path):
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     current_date = datetime.now()
     
-    # 1. 데이터 불러오기 및 정제 (가장 먼저 안전하게 실행)
+    # 1. 데이터 불러오기 및 정제
     try:
         df_orders = load_data(ORDER_FILE)
         df_inventory = load_data(INVENTORY_FILE)
         
-        # [🚨 TypeError 원천 차단] 모든 텍스트 컬럼을 안전하게 문자열로 변환하고 양끝 공백 제거
+        # 모든 텍스트 컬럼을 안전하게 문자열로 변환하고 양끝 공백 제거
         for df in [df_orders, df_inventory]:
             if '제품명' in df.columns:
                 df['제품명'] = df['제품명'].fillna('').astype(str).str.strip()
@@ -76,7 +76,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         st.error(f"❌ 데이터를 읽고 정제하는 중 오류가 발생했습니다: {e}")
         data_ready = False
 
-    # 2. UI 렌더링 영역 (try-except와 완전 분리하여 SyntaxError 원천 차단)
+    # 2. UI 렌더링 영역
     if data_ready:
         st.success(f"✅ 분석 완료! (기준일자: {current_date.strftime('%Y-%m-%d')})")
         
@@ -196,8 +196,15 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             st.markdown("---")
             st.subheader("🔍 제품별 거래처 출고 이력 상세 조회")
             
-            # [🔥 해결책] 모든 제품명을 문자열 리스트로 확실하게 바꾸어 sorted() 내부 TypeError 원천 예방
+            # 🛠️ [업데이트 완료] 드롭다운 품목을 실시간으로 미리 걸러줄 검색 필터 추가
+            history_search_term = st.text_input("🔍 이력을 추적할 의약품 이름을 입력해 보세요 (아래 선택 상자가 필터링됩니다):", "")
+            
+            # 모든 제품 목록 확보
             selectable_products = sorted([str(p) for p in df_inv_filtered['제품명'].unique() if str(p).strip() != ''])
+            
+            # 💡 사용자가 검색어를 입력하면 해당하는 약품만 목록에 남깁니다.
+            if history_search_term:
+                selectable_products = [p for p in selectable_products if history_search_term.lower() in p.lower()]
             
             selected_product = st.selectbox(
                 "📋 출고 이력을 추적할 의약품을 선택하세요:",
@@ -211,15 +218,4 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 
                 if not df_prod_orders.empty and '출고일자' in df_prod_orders.columns:
                     df_history = df_prod_orders[['매출처', '출고일자', '수량']].copy()
-                    df_history['출고일자_표시'] = df_history['출고일자'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else "날짜 불명")
-                    df_history['의약품 유효기간'] = prod_expiry
-                    
-                    df_history_display = df_history[['매출처', '출고일자_표시', '수량', '의약품 유효기간']].copy()
-                    df_history_display.columns = ['거래처명', '출고날짜', '출고수량 (개)', '의약품 유효기간']
-                    df_history_display = df_history_display.sort_values(by='출고날짜', ascending=False)
-                    
-                    st.dataframe(df_history_display, use_container_width=True, hide_index=True)
-                else:
-                    st.info(f"✨ '{selected_product}' 제품은 최근 출고 기록이 없습니다.")
-else:
-    st.warning("📢 깃허브 창고에 데이터 파일이 없거나 이름이 일치하지 않습니다.")
+                    df_history['출고일자_표시'] = df_history['출고일자'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else "
