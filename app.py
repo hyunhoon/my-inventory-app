@@ -10,7 +10,7 @@ st.title("📊 의약품 창고 및 주문 통합 분석 시스템")
 st.write("깃허브 창고에 저장된 최신 데이터를 자동으로 불러와 분석하는 전광판입니다.")
 st.markdown("---")
 
-# 📌 💡 [수정된 부분] 엑셀 파일 확장자를 .xlsx에서 .xls로 변경
+# 📌 엑셀 파일 이름 (.xls 확장자 적용)
 ORDER_FILE = "출고데이터.xls"
 INVENTORY_FILE = "재고데이터.xls"
 
@@ -30,8 +30,34 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             current_date = datetime.now()
             
-            # 날짜 형식 정리
+            # 날짜 형식 정리 및 텍스트 공백 제거
             df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
+            df_orders['제품명'] = df_orders['제품명'].astype(str).str.strip()
+            df_inventory['제품명'] = df_inventory['제품명'].astype(str).str.strip()
+            
+            # 데이터 빈 행이나 에러 텍스트 정제
+            df_orders = df_orders[df_orders['제품명'] != '']
+            df_orders = df_orders[df_orders['제품명'].lower() != 'nan']
+            df_inventory = df_inventory[df_inventory['제품명'] != '']
+            df_inventory = df_inventory[df_inventory['제품명'].lower() != 'nan']
+            
+            # 💡 [핵심 신규 기능] 재고 파일에서 완판되어 사라진 품목 자동 추적 및 수량 0으로 복원
+            existing_products = df_inventory['제품명'].unique()  # 현재 재고 파일에 있는 품목
+            all_handled_products = df_orders['제품명'].unique()  # 전체 출고 이력에 있는 품목
+            
+            # 출고 이력엔 있으나 현재 재고 파일엔 없는 품목(=재고가 0이 되어 사라진 품목) 추출
+            missing_products = [p for p in all_handled_products if p not in existing_products]
+            
+            if missing_products:
+                missing_df = pd.DataFrame({
+                    '제품명': missing_products,
+                    '재고수량': 0,
+                    '유효기간': '소진 (기록없음)'
+                })
+                # 기존 재고 리스트 아래에 재고 0짜리 품목들을 강제로 결합
+                df_inventory = pd.concat([df_inventory, missing_df], ignore_index=True)
+            
+            # 유효기간 날짜 정리 프로세스
             df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.split('.').str[0]
             df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
             
@@ -45,41 +71,36 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             "📋 전체 현재 재고"
         ])
         
-        ### [기능 1] 주문 시기 및 재고 부족 (★ 많이 남은 순 정렬 & 하모닐란, 엔커버 제외 반영) ###
+        ### [기능 1] 주문 시기 및 재고 부족 (많이 남은 순 정렬 & 하모닐란, 엔커버 제외) ###
         with tab1:
             st.header("▶️ 주문 시기 도래 및 창고 재고 부족 위험 (예상주문일 많이 남은 순서)")
             df_orders = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
             df_orders['이전출고일'] = df_orders.groupby(['매출처', '제품명'])['출고일자'].shift(1)
             df_orders['주문간격'] = (df_orders['출고일자'] - df_orders['이전출고일']).dt.days
 
-            # 거래처별 평균 주문 주기 및 최근 출고일 계산
             cycle_info = df_orders.groupby(['매출처', '제품명']).agg(
                 평균주문주기=('주문간격', 'mean'),
                 최근출고일=('출고일자', 'max'),
                 평균주문량=('수량', 'mean')
             ).reset_index()
 
-            # 주문 주기가 계산 가능한 품목만 필터링
             cycle_info = cycle_info[cycle_info['평균주문주기'].notna() & (cycle_info['평균주문주기'] > 0)].copy()
             
-            # 예상 주문일과 남은 일수 계산
             cycle_info['예상주문일'] = cycle_info.apply(lambda row: row['최근출고일'] + timedelta(days=int(row['평균주문주기'])), axis=1)
             cycle_info['남은일수'] = (cycle_info['예상주문일'] - current_date).dt.days
 
-            # 💡 [수정된 부분] 7일 이내 항목 중 '하모닐란'과 '엔커버' 문구가 포함된 제품은 제외
+            # 7일 이내 항목 중 '하모닐란'과 '엔커버' 문구가 포함된 제품은 제외
             alert_info = cycle_info[
                 (cycle_info['남은일수'] <= 7) & 
                 (~cycle_info['제품명'].str.contains('하모닐란|엔커버', na=False))
             ].copy()
             
-            # 💡 [수정된 부분] 예상 주문일이 많이 남아있는 순서로 정렬 (내림차순: ascending=False)
             alert_info = alert_info.sort_values(by='남은일수', ascending=False)
 
             has_order_alert = False
             for idx, row in alert_info.iterrows():
                 inv_stock = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
                 
-                # 창고 재고가 거래처 평균 주문량보다 부족한 경우에만 경고 출력
                 if inv_stock < row['평균주문량']:
                     has_order_alert = True
                     st.warning(f"**[{row['매출처']}]** {row['제품명']}  \n"
@@ -93,9 +114,9 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         with tab2:
             st.header("▶️ 유효기간 10개월 미만 의약품 목록 (남은 기간이 짧은 순서)")
             limit_10_months = current_date + timedelta(days=30 * 10)
+            # 재고가 실제로 남아있는 제품(>0) 중에서만 유효기간 경고 작동
             short_expiry = df_inventory[(df_inventory['유효기간_날짜'] <= limit_10_months) & (df_inventory['재고수량'] > 0)]
 
-            # 유효기간 날짜 기준으로 오름차순 정렬
             short_expiry = short_expiry.sort_values(by='유효기간_날짜', ascending=True)
 
             if not short_expiry.empty:
@@ -114,14 +135,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_last_out.columns = ['제품명', '최종출고일']
 
             df_inventory_check = pd.merge(df_inventory, df_last_out, on='제품명', how='left')
-            
-            # 최종출고일 기준으로 오름차순 정렬 (출고 기록이 아예 없는 위험 품목을 최상단 배치)
             df_inventory_check = df_inventory_check.sort_values(by='최종출고일', ascending=True, na_position='first')
             
             limit_3_months = current_date - timedelta(days=30 * 3)
             has_no_outflow_alert = False
 
             for idx, row in df_inventory_check.iterrows():
+                # 재고가 이미 0인 완판 품목은 장기 미출고(악성 재고) 경고에서 제외
                 if row['재고수량'] <= 0:
                     continue
                 if pd.isna(row['최종출고일']):
@@ -146,6 +166,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             df_all_inv = df_inventory.copy()
             df_all_inv['유효기간_표시'] = df_all_inv['유효기간_날짜'].dt.strftime('%Y-%m-%d')
+            # 날짜 기록이 없는 '재고 소진' 품목은 글자 그대로 표기
             df_all_inv['유효기간_표시'] = df_all_inv['유효기간_표시'].fillna(df_all_inv['유효기간'].astype(str))
             
             df_inv_filtered = df_all_inv[['제품명', '재고수량', '유효기간_표시']].copy()
@@ -154,7 +175,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if search_term:
                 df_inv_filtered = df_inv_filtered[df_inv_filtered['제품명'].str.contains(search_term, case=False, na=False)]
             
-            st.markdown(f"📊 **현재 조회된 품목:** 총 `{len(df_inv_filtered)}`건")
+            st.markdown(f"📊 **현재 조회된 품목 (재고 0 포함):** 총 `{len(df_inv_filtered)}`건")
             st.dataframe(df_inv_filtered, use_container_width=True, hide_index=True)
 
     except Exception as e:
