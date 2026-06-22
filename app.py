@@ -26,7 +26,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     data_loaded = False
     current_date = datetime.now()
     
-    # 순수 데이터 정제 및 예외처리 프로세스
+    # [데이터 정제 영역] 하나의 깨끗한 try-except 구조로 통합
     try:
         with st.spinner("🔄 창고에서 최신 데이터를 가져와 정밀 분석 중입니다. 잠시만 기다려 주세요..."):
             df_orders = load_data(ORDER_FILE)
@@ -40,7 +40,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if '제품명' in df_inventory.columns:
                 df_inventory['제품명'] = df_inventory['제품명'].astype(str).str.strip()
                 
-            # 수량 데이터 숫자로 완벽 변환 (에러 문자는 0 대체)
+            # 수량 데이터 숫자로 변환 (에러 문자는 0 대체)
             if '수량' in df_orders.columns:
                 df_orders['수량'] = pd.to_numeric(df_orders['수량'], errors='coerce').fillna(0)
             if '재고수량' in df_inventory.columns:
@@ -79,9 +79,9 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         data_loaded = True
         
     except Exception as e:
-        st.error(f"❌ 파일 분석 중 오류가 발생했습니다. 파일 양식과 헤더(컬럼명)를 확인해 주세요. 오류 내용: {e}")
+        st.error(f"❌ 파일 분석 중 오류가 발생했습니다. 오류 내용: {e}")
 
-    # UI 출력 영역 (삼중 따옴표 전면 도입으로 문자열 끊김 에러를 방지)
+    # [UI 출력 영역] 여기서는 절대로 SyntaxError가 나지 않도록 설계됨
     if data_loaded:
         st.success(f"✅ 분석 완료! (기준일자: {current_date.strftime('%Y-%m-%d')})")
         
@@ -131,11 +131,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                             st.warning(msg_warning)
                                        
                     if not has_order_alert:
-                        st.info("""✅ 주문 시기가 다가왔으나 재고가 부족한 품목이 없습니다. 안전합니다.""")
+                        st.info("✅ 주문 시기가 다가왔으나 재고가 부족한 품목이 없습니다. 안전합니다.")
                 else:
-                    st.info("""✅ 분석할 수 있는 주기적인 주문 패턴이 없습니다.""")
+                    st.info("✅ 분석할 수 있는 주기적인 주문 패턴이 없습니다.")
             else:
-                st.info("""✅ 출고 데이터가 부족하여 주문 시기를 계산할 수 없습니다.""")
+                st.info("✅ 出고 데이터가 부족하여 주문 시기를 계산할 수 없습니다.")
 
         ### [기능 2] 유효기간 10개월 미만 ###
         with tab2:
@@ -154,9 +154,9 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 • 유효기간: {row['유효기간_날짜'].strftime('%Y-%m-%d')} (약 {remaining_months}개월, {remaining_days}일 남음)"""
                         st.error(msg_error)
                 else:
-                    st.info("""✅ 유효기간이 10개월 미만인 품목이 없습니다. 안전합니다.""")
+                    st.info("✅ 유효기간이 10개월 미만인 품목이 없습니다. 안전합니다.")
             else:
-                st.info("""✅ 유효기간 데이터 필드가 존재하지 않습니다.""")
+                st.info("✅ 유효기간 데이터 필드가 존재하지 않습니다.")
 
         ### [기능 3] 3개월 이상 미출고 ###
         with tab3:
@@ -187,11 +187,63 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                         st.info(msg_long_term)
 
                 if not has_no_outflow_alert:
-                    st.info("""✅ 3개월 이상 창고에 묶여 있는 장기 체화 재고가 없습니다.""")
+                    st.info("✅ 3개월 이상 창고에 묶여 있는 장기 체화 재고가 없습니다.")
             else:
-                st.info("""✅ 출고 기록이 없어 장기 미출고를 분석할 수 없습니다.""")
+                st.info("✅ 출고 기록이 없어 장기 미출고를 분석할 수 없습니다.")
 
         ### [기능 4] 전체 현재 재고 및 조회 ###
         with tab4:
             st.header("▶️ 창고 전체 현재 재고 현황")
-            st
+            st.write("현재 창고에 등록된 모든 의약품 리스트입니다. 제품명을 입력하면 실시간으로 필터링됩니다.")
+            
+            search_term = st.text_input("🔍 의약품 검색 (찾으시는 제품명을 입력하세요)", "")
+            
+            df_all_inv = df_inventory.copy()
+            
+            # dt.strftime을 안전하게 적용하고 결측치는 기존 텍스트 유지
+            if '유효기간_날짜' in df_all_inv.columns:
+                df_all_inv['유효기간_표시'] = df_all_inv['유효기간_날짜'].dt.strftime('%Y-%m-%d')
+                df_all_inv['유효기간_표시'] = df_all_inv['유효기간_표시'].fillna(df_all_inv['유효기간'].astype(str))
+            else:
+                df_all_inv['유효기간_표시'] = df_all_inv['유효기간'].astype(str)
+            
+            df_inv_filtered = df_all_inv[['제품명', '재고수량', '유효기간_표시']].copy()
+            df_inv_filtered.columns = ['제품명', '재고 수량 (개)', '유효기간']
+            
+            if search_term:
+                df_inv_filtered = df_inv_filtered[df_inv_filtered['제품명'].str.contains(search_term, case=False, na=False)]
+            
+            st.markdown(f"📊 **현재 조회된 품목 (재고 0 포함):** 총 `{len(df_inv_filtered)}`건")
+            st.dataframe(df_inv_filtered, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            st.subheader("🔍 제품별 거래처 출고 이력 상세 조회")
+            
+            selectable_products = sorted(df_inv_filtered['제품명'].unique())
+            selected_product = st.selectbox(
+                "📋 출고 이력을 추적할 의약품을 선택하세요:",
+                ["-- 상세 조회를 원하시는 의약품을 선택해 주세요 --"] + selectable_products
+            )
+            
+            if selected_product != "-- 상세 조회를 원하시는 의약품을 선택해 주세요 --":
+                df_prod_orders = df_orders[df_orders['제품명'] == selected_product].copy()
+                
+                prod_expiry_series = df_all_inv[df_all_inv['제품명'] == selected_product]['유효기간_표시']
+                prod_expiry = prod_expiry_series.values[0] if not prod_expiry_series.empty else "기록 없음"
+                
+                if not df_prod_orders.empty and '출고일자' in df_prod_orders.columns:
+                    df_history = df_prod_orders[['매출처', '출고일자', '수량']].copy()
+                    
+                    df_history['출고일자_표시'] = df_history['출고일자'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else "날짜 불명")
+                    df_history['의약품 유효기간'] = prod_expiry
+                    
+                    df_history_display = df_history[['매출처', '출고일자_표시', '수량', '의약품 유효기간']].copy()
+                    df_history_display.columns = ['거래처명', '출고날짜', '출고수량 (개)', '의약품 유효기간']
+                    df_history_display = df_history_display.sort_values(by='출고날짜', ascending=False)
+                    
+                    st.markdown("💡 **정렬 팁:** 표 제목행을 클릭하시면 정렬할 수 있습니다.")
+                    st.dataframe(df_history_display, use_container_width=True, hide_index=True)
+                else:
+                    st.info(f"✨ '{selected_product}' 제품은 창고에 재고 기록은 있으나 최근 출고 기록이 없습니다.")
+else:
+    st.warning("📢 깃허브 창고에 데이터 파일이 없거나 이름이 일치하지 않습니다.")
