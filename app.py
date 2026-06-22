@@ -35,13 +35,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_orders['제품명'] = df_orders['제품명'].astype(str).str.strip()
             df_inventory['제품명'] = df_inventory['제품명'].astype(str).str.strip()
             
-            # 데이터 빈 행이나 에러 텍스트 정제
+            # 💡 [오류 수정 부분] .lower() 대신 .str.lower()를 사용하여 에러 해결
             df_orders = df_orders[df_orders['제품명'] != '']
-            df_orders = df_orders[df_orders['제품명'].lower() != 'nan']
+            df_orders = df_orders[df_orders['제품명'].str.lower() != 'nan']
             df_inventory = df_inventory[df_inventory['제품명'] != '']
-            df_inventory = df_inventory[df_inventory['제품명'].lower() != 'nan']
+            df_inventory = df_inventory[df_inventory['제품명'].str.lower() != 'nan']
             
-            # 💡 [핵심 신규 기능] 재고 파일에서 완판되어 사라진 품목 자동 추적 및 수량 0으로 복원
+            # 재고 파일에서 완판되어 사라진 품목 자동 추적 및 수량 0으로 복원
             existing_products = df_inventory['제품명'].unique()  # 현재 재고 파일에 있는 품목
             all_handled_products = df_orders['제품명'].unique()  # 전체 출고 이력에 있는 품목
             
@@ -166,20 +166,3 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             df_all_inv = df_inventory.copy()
             df_all_inv['유효기간_표시'] = df_all_inv['유효기간_날짜'].dt.strftime('%Y-%m-%d')
-            # 날짜 기록이 없는 '재고 소진' 품목은 글자 그대로 표기
-            df_all_inv['유효기간_표시'] = df_all_inv['유효기간_표시'].fillna(df_all_inv['유효기간'].astype(str))
-            
-            df_inv_filtered = df_all_inv[['제품명', '재고수량', '유효기간_표시']].copy()
-            df_inv_filtered.columns = ['제품명', '재고 수량 (개)', '유효기간']
-            
-            if search_term:
-                df_inv_filtered = df_inv_filtered[df_inv_filtered['제품명'].str.contains(search_term, case=False, na=False)]
-            
-            st.markdown(f"📊 **현재 조회된 품목 (재고 0 포함):** 총 `{len(df_inv_filtered)}`건")
-            st.dataframe(df_inv_filtered, use_container_width=True, hide_index=True)
-
-    except Exception as e:
-        st.error(f"❌ 파일 분석 중 오류가 발생했습니다. 파일 양식과 헤더(컬럼명)를 확인해 주세요. 오류 내용: {e}")
-else:
-    st.warning("📢 깃허브 창고에 데이터 파일이 없거나 이름이 일치하지 않습니다.")
-    st.info(f"💡 현재 창고에 **'{ORDER_FILE}'** 파일과 **'{INVENTORY_FILE}'** 파일이 모두 올라와 있어야 자동으로 화면이 켜집니다.")
