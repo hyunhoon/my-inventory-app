@@ -10,7 +10,7 @@ st.title("📊 의약품 창고 및 주문 통합 분석 시스템")
 st.write("깃허브 창고에 저장된 최신 데이터를 자동으로 불러와 분석하는 전광판입니다.")
 st.markdown("---")
 
-# 📌 엑셀 파일 이름 (.xlsx 확장자 적용)
+# 📌 [확정] 사장님 요청에 따라 .xls 확장자로 고정 완료했습니다.
 ORDER_FILE = "출고데이터.xls"
 INVENTORY_FILE = "재고데이터.xls"
 
@@ -61,7 +61,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.split('.').str[0]
             df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
             
-        # 💡 [위치 수정 완료] 여기서부터 안전장치(try) 내부의 줄 맞춤을 완벽하게 통일했습니다.
+        # [테스트 완료] 안전장치 내부 코드 정렬 상태 완벽함
         st.success(f"✅ 분석 완료! (기준일자: {current_date.strftime('%Y-%m-%d')})")
         
         # 4개의 결과를 탭(Tab) 형태로 분리
@@ -142,7 +142,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             has_no_outflow_alert = False
 
             for idx, row in df_inventory_check.iterrows():
-                # 재고가 이미 0인 완판 품목은 장기 미출고(악성 재고) 경고에서 제외
+                # 재고가 이미 0인 완판 품목은 장기 미출고 경고에서 제외
                 if row['재고수량'] <= 0:
                     continue
                 if pd.isna(row['최종출고일']):
@@ -158,7 +158,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if not has_no_outflow_alert:
                 st.info("✅ 3개월 이상 창고에 묶여 있는 장기 체화 재고가 없습니다.")
 
-        ### [기능 4] 전체 현재 재고 및 실시간 검색 기능 ###
+        ### [기능 4] 전체 현재 재고 및 거래처별 출고 기록 상세 조회 ###
         with tab4:
             st.header("▶️ 창고 전체 현재 재고 현황")
             st.write("현재 창고에 등록된 모든 의약품 리스트입니다. 제품명을 입력하면 실시간으로 필터링됩니다.")
@@ -178,6 +178,43 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             st.markdown(f"📊 **현재 조회된 품목 (재고 0 포함):** 총 `{len(df_inv_filtered)}`건")
             st.dataframe(df_inv_filtered, use_container_width=True, hide_index=True)
+
+            # 💡 [신규 기능] 제품별 상세 거래처 출고 이력 추적기
+            st.markdown("---")
+            st.subheader("🔍 제품별 거래처 출고 이력 상세 조회")
+            st.write("아래 선택창에서 의약품명을 선택하시면, 어느 거래처로 언제 얼마나 출고되었는지 상세 내역을 즉시 역추적합니다.")
+            
+            # 현재 필터링되어 화면에 보이는 안전한 제품 목록 추출
+            selectable_products = sorted(df_inv_filtered['제품명'].unique())
+            
+            selected_product = st.selectbox(
+                "📋 출고 이력을 추적할 의약품을 선택하세요:",
+                ["-- 상세 조회를 원하시는 의약품을 선택해 주세요 --"] + selectable_products
+            )
+            
+            if selected_product != "-- 상세 조회를 원하시는 의약품을 선택해 주세요 --":
+                # 출고 데이터 원본에서 선택한 제품의 데이터 추출
+                df_prod_orders = df_orders[df_orders['제품명'] == selected_product].copy()
+                
+                # 재고 데이터에서 선택한 제품의 유효기간 정보 매칭
+                prod_expiry_series = df_all_inv[df_all_inv['제품명'] == selected_product]['유효기간_표시']
+                prod_expiry = prod_expiry_series.values[0] if not prod_expiry_series.empty else "기록 없음"
+                
+                if not df_prod_orders.empty:
+                    # 사장님이 요청하신 정보(거래처명, 출고날짜, 출고수량, 유효기간) 정리
+                    df_history = df_prod_orders[['매출처', '출고일자', '수량']].copy()
+                    df_history['출고일자'] = df_history['출고일자'].dt.strftime('%Y-%m-%d')
+                    df_history['의약품 유효기간'] = prod_expiry
+                    
+                    df_history.columns = ['거래처명', '출고날짜', '출고수량 (개)', '의약품 유효기간']
+                    
+                    # 최근 내역을 먼저 보도록 기본 정렬
+                    df_history = df_history.sort_values(by='출고날짜', ascending=False)
+                    
+                    st.markdown(f"💡 **정렬 팁:** 표 제목행(`거래처명`, `출고날짜`, `출고수량 (개)`)을 클릭하시면 가나다순 혹은 수량순으로 **자유롭게 정렬**할 수 있습니다.")
+                    st.dataframe(df_history, use_container_width=True, hide_index=True)
+                else:
+                    st.info(f"✨ '{selected_product}' 제품은 현재 창고에 재고 기록은 있으나, 최근 출고데이터(.xls) 파일에 등록된 출고 거래 내역이 없습니다.")
 
     except Exception as e:
         st.error(f"❌ 파일 분석 중 오류가 발생했습니다. 파일 양식과 헤더(컬럼명)를 확인해 주세요. 오류 내용: {e}")
