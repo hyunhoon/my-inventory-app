@@ -10,9 +10,9 @@ st.title("📊 의약품 창고 및 주문 통합 분석 시스템")
 st.write("깃허브 창고에 저장된 최신 데이터를 자동으로 불러와 분석하는 전광판입니다.")
 st.markdown("---")
 
-# 📌 엑셀 파일 이름 (.xls 확장자 적용)
-ORDER_FILE = "출고데이터.xls"
-INVENTORY_FILE = "재고데이터.xls"
+# 📌 엑셀 파일 이름 (.xlsx 확장자 적용)
+ORDER_FILE = "출고데이터.xlsx"
+INVENTORY_FILE = "재고데이터.xlsx"
 
 # 안전하게 파일 읽는 함수
 def load_data(file_path):
@@ -35,7 +35,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_orders['제품명'] = df_orders['제품명'].astype(str).str.strip()
             df_inventory['제품명'] = df_inventory['제품명'].astype(str).str.strip()
             
-            # 💡 [오류 수정 부분] .lower() 대신 .str.lower()를 사용하여 에러 해결
+            # 데이터 빈 행이나 에러 텍스트 정제
             df_orders = df_orders[df_orders['제품명'] != '']
             df_orders = df_orders[df_orders['제품명'].str.lower() != 'nan']
             df_inventory = df_inventory[df_inventory['제품명'] != '']
@@ -113,56 +113,3 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         ### [기능 2] 유효기간 10개월 미만 ###
         with tab2:
             st.header("▶️ 유효기간 10개월 미만 의약품 목록 (남은 기간이 짧은 순서)")
-            limit_10_months = current_date + timedelta(days=30 * 10)
-            # 재고가 실제로 남아있는 제품(>0) 중에서만 유효기간 경고 작동
-            short_expiry = df_inventory[(df_inventory['유효기간_날짜'] <= limit_10_months) & (df_inventory['재고수량'] > 0)]
-
-            short_expiry = short_expiry.sort_values(by='유효기간_날짜', ascending=True)
-
-            if not short_expiry.empty:
-                for idx, row in short_expiry.iterrows():
-                    remaining_days = (row['유효기간_날짜'] - current_date).days
-                    remaining_months = remaining_days // 30
-                    st.error(f"**{row['제품명']}** (현재고: {row['재고수량']:.0f}개)  \n"
-                             f"• 유효기간: {row['유효기간_날짜'].strftime('%Y-%m-%d')} (약 {remaining_months}개월, {remaining_days}일 남음)")
-            else:
-                st.info("✅ 유효기간이 10개월 미만인 품목이 없습니다. 안전합니다.")
-
-        ### [기능 3] 3개월 이상 미출고 ###
-        with tab3:
-            st.header("▶️ 3개월 이상 장기 미출고 의약품 (최종 출고일이 오래된 순서)")
-            df_last_out = df_orders.groupby('제품명')['출고일자'].max().reset_index()
-            df_last_out.columns = ['제품명', '최종출고일']
-
-            df_inventory_check = pd.merge(df_inventory, df_last_out, on='제품명', how='left')
-            df_inventory_check = df_inventory_check.sort_values(by='최종출고일', ascending=True, na_position='first')
-            
-            limit_3_months = current_date - timedelta(days=30 * 3)
-            has_no_outflow_alert = False
-
-            for idx, row in df_inventory_check.iterrows():
-                # 재고가 이미 0인 완판 품목은 장기 미출고(악성 재고) 경고에서 제외
-                if row['재고수량'] <= 0:
-                    continue
-                if pd.isna(row['최종출고일']):
-                    has_no_outflow_alert = True
-                    st.info(f"**{row['제품명']}** (현재고: {row['재고수량']:.0f}개)  \n"
-                            f"• ⚠️ 경고: 최근 출고 리스트에 나간 기록이 전혀 없는 재고입니다.")
-                elif row['최종출고일'] <= limit_3_months:
-                    has_no_outflow_alert = True
-                    no_outflow_days = (current_date - row['최종출고일']).days
-                    st.info(f"**{row['제품명']}** (현재고: {row['재고수량']:.0f}개)  \n"
-                            f"• 최종 출고일: {row['최종출고일'].strftime('%Y-%m-%d')} ({no_outflow_days}일 동안 출고 없음)")
-
-            if not has_no_outflow_alert:
-                st.info("✅ 3개월 이상 창고에 묶여 있는 장기 체화 재고가 없습니다.")
-
-        ### [기능 4] 전체 현재 재고 및 실시간 검색 기능 ###
-        with tab4:
-            st.header("▶️ 창고 전체 현재 재고 현황")
-            st.write("현재 창고에 등록된 모든 의약품 리스트입니다. 제품명을 입력하면 실시간으로 필터링됩니다.")
-            
-            search_term = st.text_input("🔍 의약품 검색 (찾으시는 제품명을 입력하세요)", "")
-            
-            df_all_inv = df_inventory.copy()
-            df_all_inv['유효기간_표시'] = df_all_inv['유효기간_날짜'].dt.strftime('%Y-%m-%d')
