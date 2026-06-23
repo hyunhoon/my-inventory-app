@@ -44,9 +44,15 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_orders['매출처'].fillna('').astype(str).str.strip()
             )
             
-        # 빈 행 정제
-        df_orders = df_orders[df_orders['제품명'] != '']
-        df_inventory = df_inventory[df_inventory['제품명'] != '']
+        # 🛠️ [수정 부분] 빈 행 및 원본 파일의 [합 계] 데이터 영구 제외 처리
+        df_orders = df_orders[
+            (df_orders['제품명'] != '') & 
+            (~df_orders['제품명'].str.contains('합계|합 계', na=False))
+        ]
+        df_inventory = df_inventory[
+            (df_inventory['제품명'] != '') & 
+            (~df_inventory['제품명'].str.contains('합계|합 계', na=False))
+        ]
         
         # 수량 데이터 숫자 변환
         if '수량' in df_orders.columns:
@@ -295,12 +301,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             st.markdown(f"📊 **현재 조회된 품목:** 총 `{len(df_inv_filtered)}`건")
             
-            # 🛠️ [에러 해결 부분] 언더바(_)를 하이픈(-)으로 전면 교체!
             clicked_row_event = st.dataframe(
                 df_inv_filtered, 
                 use_container_width=True, 
                 hide_index=True,
-                selection_mode="single-row",  # <-- single_row에서 single-row로 수정 완료!
+                selection_mode="single-row",
                 on_select="rerun"
             )
 
