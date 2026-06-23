@@ -60,7 +60,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 .fillna(0)
             )
             
-        # 出고일자 날짜형 변환
+        # 출고일자 날짜형 변환
         if '출고일자' in df_orders.columns:
             df_orders['출고일자'] = (
                 pd.to_datetime(df_orders['출고일자'], errors='coerce')
@@ -295,13 +295,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             st.markdown(f"📊 **현재 조회된 품목:** 총 `{len(df_inv_filtered)}`건")
             
-            # 🛠️ [핵심 개조] 표에서 마우스 클릭을 감지하도록 설정
+            # 🛠️ [에러 해결 부분] 언더바(_)를 하이픈(-)으로 전면 교체!
             clicked_row_event = st.dataframe(
                 df_inv_filtered, 
                 use_container_width=True, 
                 hide_index=True,
-                selection_mode="single_row",  # 한 줄씩 선택 가능하게 설정
-                on_select="rerun"             # 클릭할 때 화면을 즉시 새로고침
+                selection_mode="single-row",  # <-- single_row에서 single-row로 수정 완료!
+                on_select="rerun"
             )
 
             st.markdown("---")
