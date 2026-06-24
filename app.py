@@ -33,10 +33,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         if '매출처' in df_orders.columns:
             df_orders['매출처'] = df_orders['매출처'].fillna('').astype(str).str.strip()
             
-        # [합 계] 데이터 제외 처리
-        k_word = '합계|합 계|\\[합.*\\]'
+        # [수정 반영] 합계 데이터 및 "금융비용할인" 항목 전면 제외 처리
+        k_word = '합계|합 계|\\[합.*\\]|금융비용할인'
         df_orders = df_orders[(df_orders['제품명'] != '') & (~df_orders['제품명'].str.contains(k_word, na=False))]
         df_inventory = df_inventory[(df_inventory['제품명'] != '') & (~df_inventory['제품명'].str.contains(k_word, na=False))]
+        
+        if '매출처' in df_orders.columns:
+            df_orders = df_orders[~df_orders['매출처'].str.contains('금융비용할인', na=False)]
         
         # 숫자 데이터 변환
         if '수량' in df_orders.columns:
@@ -115,7 +118,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 분석할 데이터가 없습니다.")
 
-        # --- [탭 2] 주문 시기 및 재고 부족 (60일 미주문 필터 적용됨) ---
+        # --- [탭 2] 주문 시기 및 재고 부족 (의약품별 매출처 거래량 정렬 적용) ---
         with t2:
             st.header("▶️ 주문 시기 및 재고 부족 위험")
             if not df_orders.empty and '매출처' in df_orders.columns and '출고일자' in df_orders.columns:
@@ -133,16 +136,18 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     cyc['예상일'] = cyc.apply(lambda r: r['r_il'] + timedelta(days=int(r['p_ju'])), axis=1)
                     cyc['남은일'] = (cyc['예상일'] - current_date).dt.days
 
-                    # 기본 알림 대상 필터링 (일주일 이내 예상 품목 & 특정 예외 의약품 제외)
+                    # 기본 필터링 (7일 이내 예상 및 특정 품목 제외)
                     alert = cyc[(cyc['남은일'] <= 7) & (~cyc['제품명'].str.contains('하모닐란|엔커버', na=False))].copy()
                     
-                    # [수정 반영] 최종 출고일(r_il)로부터 현재까지 60일 이상 주문이 없었던 항목 제외
+                    # 60일 이상 주문 없었던 항목 제외
                     alert = alert[(current_date - alert['r_il']).dt.days < 60].copy()
                     
-                    # 매출처별 총 거래량 계산 후 상위 매출처 우선 정렬
-                    c_vol = df_orders.groupby('매출처')['수량'].sum().reset_index(name='매출처총거래량')
-                    alert = pd.merge(alert, c_vol, on='매출처', how='left')
-                    alert = alert.sort_values(by=['매출처총거래량', '남은일'], ascending=[False, True])
+                    # [수정 반영] 매출처별 총량이 아닌, '해당 매출처의 해당 의약품 총 거래량' 계산
+                    p_c_vol = df_orders.groupby(['매출처', '제품명'])['수량'].sum().reset_index(name='품목별거래량')
+                    alert = pd.merge(alert, p_c_vol, on=['매출처', '제품명'], how='left')
+                    
+                    # 의약품별 거래량이 많은 순(내림차순) -> 남은일이 촉박한 순(오름차순) 정렬
+                    alert = alert.sort_values(by=['품목별거래량', '남은일'], ascending=[False, True])
 
                     has_al = False
                     for idx, row in alert.iterrows():
@@ -152,7 +157,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                             st.warning(
                                 f"**[{row['매출처']}]** {row['제품명']}\n"
                                 f"• 예상일: {row['예상일'].strftime('%Y-%m-%d')} ({row['남은일']}일 남음)\n"
-                                f"• 주문량: {row['p_am']:.0f}개 | 재고: {stk:.0f}개 (매출처 총거래량: {row['매출처총거래량']:.0f}개)"
+                                f"• 주문량: {row['p_am']:.0f}개 | 재고: {stk:.0f}개 (이 거래처의 해당 품목 총거래량: {row['품목별거래량']:.0f}개)"
                             )
                     if not has_al:
                         st.info("✅ 위험 품목이 없습니다.")
