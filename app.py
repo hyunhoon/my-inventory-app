@@ -237,7 +237,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (버전 호환성 패치 완료) ---
+        # --- [탭 5] 전체 현재 재고 (버그 없는 우회 안전 모드) ---
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             p_search = st.text_input("🔍 의약품 검색:", "", key="p_search")
@@ -250,15 +250,14 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             df_f = df_f.reset_index(drop=True)
             
-            st.markdown(f"📊 **목록:** 공식 재고 `{len(df_f)}`건 (아래 표에서 원하는 의약품 **행을 클릭**하면 하단에 상세 출고 이력이 표시됩니다.)")
+            st.markdown(f"📊 **목록:** 공식 재고 `{len(df_f)}`건 (아래 표에서 확인하려는 의약품 **행을 클릭**하시면 하단에 상세 출고 이력이 표시됩니다.)")
             
-            # 리스트 구조형태로 넘겨주어 단일 선택 모드가 모든 버전에서 호환되도록 강제 수정
+            # 버그를 일으키는 selection_mode 옵션을 지워 모든 버전에서 정상 작동하도록 설계
             selection = st.dataframe(
                 df_f, 
                 use_container_width=True, 
                 hide_index=True,
-                on_select="rerun",
-                selection_mode=["single_row"]
+                on_select="rerun"
             )
 
             st.markdown("---")
@@ -278,7 +277,12 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     selected_rows = list(selection.rows)
 
             if selected_rows:
-                selected_row_idx = selected_rows[0]
+                # 사용자가 2개 이상 중복 체크(선택)했을 때 대응책 적용
+                if len(selected_rows) > 1:
+                    st.warning("🚨 **중복 선택 감지:** 의약품은 한 번에 **하나만** 선택해 주세요! (현재 가장 최근에 클릭하신 의약품의 이력을 보여주고 있습니다.)")
+                    selected_row_idx = selected_rows[-1] # 가장 최근에 클릭한 행 매칭
+                else:
+                    selected_row_idx = selected_rows[0]
                 
                 if selected_row_idx < len(df_f):
                     selected_product = df_f.iloc[selected_row_idx]['제품명']
