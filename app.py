@@ -139,16 +139,23 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             st.header("▶️ 90일 이상 장기 미출고 의약품")
             if not df_orders.empty and '출고일자' in df_orders.columns:
                 df_l = df_orders.groupby('제품명')['출고일자'].max().reset_index()
+                df_l.columns = ['제품명', '최종일']
                 df_chk = pd.merge(df_inventory, df_l, on='제품명', how='left')
                 df_chk = df_chk[df_chk['재고수량'] > 0].copy()
-                df_chk['경과일'] = (current_date - df_chk['출고일자']).dt.days
+                df_chk['경과일'] = (current_date - df_chk['최종일']).dt.days
+                df_chk['기록없음'] = df_chk['최종일'].isna()
                 lim_90 = current_date - timedelta(days=90)
-                df_filtered = df_chk[df_chk['출고일자'].isna() | (df_chk['출고일자'] <= lim_90)].copy()
-                for idx, row in df_filtered.sort_values(by='경과일', ascending=False).iterrows():
-                    yuhyo = row['유효기간_표시'] if '유효기간_표시' in row else "기록없음"
-                    st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 최종 출고일: {row['출고일자'].strftime('%Y-%m-%d') if pd.notna(row['출고일자']) else '기록없음'}")
+                df_filtered = df_chk[df_chk['기록없음'] | (df_chk['최종일'] <= lim_90)].copy()
+                if not df_filtered.empty:
+                    df_filtered = df_filtered.sort_values(by=['기록없음', '경과일'], ascending=[False, False])
+                    for idx, row in df_filtered.iterrows():
+                        yuhyo = row['유효기간_표시'] if '유효기간_표시' in row and str(row['유효기간_표시']) != 'nan' else "기록없음"
+                        if row['기록없음']:
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 출고 기록 없음")
+                        else:
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 최종일: {row['최종일'].strftime('%Y-%m-%d')} (**{int(row['경과일'])}일 경과**)")
 
-        # [탭 5] 수정 완료된 영역
+        # [탭 5] 전체 현재 재고 (체크박스 연동형 상세 조회)
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
@@ -160,7 +167,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_f_disp = df_f.copy()
             if p_search: df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)]
             
-            # 체크박스 컬럼 추가
             df_f_disp.insert(0, "선택", False)
             st.markdown("### 📋 창고 전체 재고 리스트")
             edited_df = st.data_editor(df_f_disp, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
