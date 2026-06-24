@@ -77,7 +77,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     if data_ready:
         st.success(f"✅ 분석 완료! ({current_date.strftime('%Y-%m-%d')})")
         
-        # 탭 레이아웃 생성
+        # 탭 레이아웃 생성 (오타 및 경로 추적을 위해 정확히 t1~t5로 지정)
         t1, t2, t3, t4, t5 = st.tabs([
             "🏢 매출처별 출고 리스트",
             "⚠️ 주문시기 및 재고부족 알림", 
@@ -179,13 +179,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     for idx, row in s_exp_sorted.iterrows():
                         rem_d = (row['유효기간_날짜'] - current_date).days
                         
-                        # 180일 미만인 경우 강력 강조 (빨간색 알림창)
                         if rem_d < 180:
                             st.error(
                                 f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개)\n"
                                 f"• 유효기간: {row['유효기간_표시']} (**{rem_d}일 남음**)"
                             )
-                        # 180일 이상 365일 미만인 경우 (노란색 알림창)
                         else:
                             st.warning(
                                 f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개)\n"
@@ -202,15 +200,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_l.columns = ['제품명', '최종일']
 
                 df_chk = pd.merge(df_inventory, df_l, on='제품명', how='left')
-                
-                # 창고에 재고가 남아있는 항목만 대상
                 df_chk = df_chk[df_chk['재고수량'] > 0].copy()
                 
-                # 경과일 및 기록 없음 여부 플래그 계산
                 df_chk['경과일'] = (current_date - df_chk['최종일']).dt.days
                 df_chk['기록없음'] = df_chk['최종일'].isna()
                 
-                # 90일 기준 날짜 설정 및 필터링
                 lim_90 = current_date - timedelta(days=90)
                 df_filtered = df_chk[df_chk['기록없음'] | (df_chk['최종일'] <= lim_90)].copy()
 
@@ -237,80 +231,46 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (클릭/검색형 개편) ---
+        # --- [탭 5] 전체 현재 재고 (클릭 연동형 완벽 반영) ---
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             
             # 기본 재고 데이터 구조 준비
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
             df_f.columns = ['제품명', '재고 수량 (개)', '유효기간']
-            
-            # 중복 제거 및 가나다순 정렬된 의약품 이름 리스트 생성
-            u_prods = sorted([p for p in df_f['제품명'].unique() if p != ''])
-            
-            st.markdown("### 🔍 조회할 의약품 선택 (클릭)")
-            
-            # 불편한 네모박스 체크 방식 대신, 이름을 클릭해서 바로 선택하는 Selectbox 적용 (타이핑 검색도 지원)
-            selected_product = st.selectbox(
-                "상세 출고 이력을 확인하려는 의약품명을 클릭하여 선택하세요:", 
-                u_prods, 
-                index=0 if u_prods else None,
-                key="p_select"
-            )
-
-            st.markdown("---")
-            st.subheader("📊 의약품별 거래처 출고 이력 상세 조회")
-
-            if selected_product:
-                # 선택한 의약품의 현재고 및 유효기간 요약 안내
-                prod_info_rows = df_f[df_f['제품명'] == selected_product]
-                if not prod_info_rows.empty:
-                    prod_info = prod_info_rows.iloc[0]
-                    st.info(f"📦 **선택된 의약품:** `{selected_product}`  |  현재고: **{prod_info['재고 수량 (개)']:.0f}개** |  유효기간: **{prod_info['유효기간']}**")
-                else:
-                    st.info(f"📦 **선택된 의약품:** `{selected_product}`")
-                
-                # 출고 이력 데이터 매칭 및 출력
-                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
-                p_exp_s = df_inventory[df_inventory['제품명'] == selected_product]['유효기간_표시']
-                p_exp = p_exp_s.values[0] if not p_exp_s.empty else "없음"
-                
-                if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
-                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
-                    df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
-                    df_h['유효기간'] = p_exp
-                    
-                    df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
-                    df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
-                    df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
-                    
-                    st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
-                    
-                    # 엑셀 다운로드 기능 추가 제공
-                    csv_data = df_h_disp.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(
-                        label=f"💾 {selected_product} 출고 이력 다운로드 (CSV)",
-                        data=csv_data,
-                        file_name=f"{selected_product}_출고이력.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.light_style = True
-                    st.warning("✨ 해당 의약품은 최근 출고 기록이 없습니다.")
-            else:
-                st.info("💡 위의 선택창에서 조회할 의약품명을 클릭해 주세요.")
-
-            st.markdown("---")
-            st.subheader("📋 참고용 창고 전체 재고 리스트")
+            df_f = df_f.sort_values(by='제품명').reset_index(drop=True)
             
             # 리스트 내 서브 검색 기능 제공
             p_search = st.text_input("🔍 리스트 내에서 의약품명으로 재고 현황 검색:", "", key="p_search")
             
             df_f_disp = df_f.copy()
             if p_search:
-                df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)]
+                df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)].reset_index(drop=True)
             
-            # 네모박스(체크기능)를 완전히 제거하고 순수하게 엑셀처럼 쳐다보는 용도의 깔끔한 테이블 노출
-            st.dataframe(df_f_disp, use_container_width=True, hide_index=True)
-else:
-    st.warning("📢 데이터 파일이 존재하지 않습니다.")
+            st.markdown("### 📋 참고요 창고 전체 재고 리스트 (확인할 의약품 이름을 클릭하세요)")
+            
+            # [핵심] 최신 Streamlit 문법에 맞춰 행 선택 활성화 (StreamlitAPIException 완벽 방지)
+            selection = st.dataframe(
+                df_f_disp, 
+                use_container_width=True, 
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single_row",
+                key="medicine_table_selector"
+            )
+            
+            # 선택된 행 인덱스를 환경에 맞춰 안전하게 추출하는 로직
+            selected_row_idx = None
+            if selection:
+                if hasattr(selection, "selection") and hasattr(selection.selection, "rows") and selection.selection.rows:
+                    selected_row_idx = selection.selection.rows[0]
+                elif isinstance(selection, dict) and "selection" in selection and "rows" in selection["selection"] and selection["selection"]["rows"]:
+                    selected_row_idx = selection["selection"]["rows"][0]
+                elif isinstance(selection, dict) and "rows" in selection and selection["rows"]:
+                    selected_row_idx = selection["rows"][0]
+
+            st.markdown("---")
+            st.subheader("📊 의약품별 거래처 출고 이력 상세 조회")
+
+            # 표에서 행이 선택되었을 때만 하단 매출처 내역 노출
+            if selected_row_idx is not None
