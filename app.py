@@ -115,7 +115,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 분석할 데이터가 없습니다.")
 
-        # --- [탭 2] 주문 시기 및 재고 부족 ---
+        # --- [탭 2] 주문 시기 및 재고 부족 (정렬 순서 변경됨) ---
         with t2:
             st.header("▶️ 주문 시기 및 재고 부족 위험")
             if not df_orders.empty and '매출처' in df_orders.columns and '출고일자' in df_orders.columns:
@@ -133,8 +133,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     cyc['예상일'] = cyc.apply(lambda r: r['r_il'] + timedelta(days=int(r['p_ju'])), axis=1)
                     cyc['남은일'] = (cyc['예상일'] - current_date).dt.days
 
+                    # 기본 알림 대상 필터링
                     alert = cyc[(cyc['남은일'] <= 7) & (~cyc['제품명'].str.contains('하모닐란|엔커버', na=False))].copy()
-                    alert = alert.sort_values(by='남은일', ascending=False)
+                    
+                    # [수정 반영] 매출처별 총 거래량 계산 후 상위 매출처 우선 정렬
+                    c_vol = df_orders.groupby('매출처')['수량'].sum().reset_index(name='매출처총거래량')
+                    alert = pd.merge(alert, c_vol, on='매출처', how='left')
+                    alert = alert.sort_values(by=['매출처총거래량', '남은일'], ascending=[False, True])
 
                     has_al = False
                     for idx, row in alert.iterrows():
@@ -144,7 +149,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                             st.warning(
                                 f"**[{row['매출처']}]** {row['제품명']}\n"
                                 f"• 예상일: {row['예상일'].strftime('%Y-%m-%d')} ({row['남은일']}일 남음)\n"
-                                f"• 주문량: {row['p_am']:.0f}개 | 재고: {stk:.0f}개"
+                                f"• 주문량: {row['p_am']:.0f}개 | 재고: {stk:.0f}개 (매출처 총거래량: {row['매출처총거래량']:.0f}개)"
                             )
                     if not has_al:
                         st.info("✅ 위험 품목이 없습니다.")
@@ -160,7 +165,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if '유효기간_날짜' in df_inventory.columns:
                 s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['유효기간_날짜'] <= lim_10) & (df_inventory['재고수량'] > 0)]
                 if not s_exp.empty:
-                    # 짤림 방지를 위해 완전히 한 줄로 정돈했습니다.
                     s_exp_sorted = s_exp.sort_values(by='유효기간_날짜', ascending=True)
                     for idx, row in s_exp_sorted.iterrows():
                         rem_d = (row['유효기간_날짜'] - current_date).days
