@@ -237,77 +237,80 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (버그 없는 우회 안전 모드) ---
+        # --- [탭 5] 전체 현재 재고 (클릭/검색형 개편) ---
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
-            p_search = st.text_input("🔍 의약품 검색:", "", key="p_search")
             
+            # 기본 재고 데이터 구조 준비
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
             df_f.columns = ['제품명', '재고 수량 (개)', '유효기간']
             
-            if p_search:
-                df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
+            # 중복 제거 및 가나다순 정렬된 의약품 이름 리스트 생성
+            u_prods = sorted([p for p in df_f['제품명'].unique() if p != ''])
             
-            df_f = df_f.reset_index(drop=True)
+            st.markdown("### 🔍 조회할 의약품 선택 (클릭)")
             
-            st.markdown(f"📊 **목록:** 공식 재고 `{len(df_f)}`건 (아래 표에서 확인하려는 의약품 **행을 클릭**하시면 하단에 상세 출고 이력이 표시됩니다.)")
-            
-            # 버그를 일으키는 selection_mode 옵션을 지워 모든 버전에서 정상 작동하도록 설계
-            selection = st.dataframe(
-                df_f, 
-                use_container_width=True, 
-                hide_index=True,
-                on_select="rerun"
+            # 불편한 네모박스 체크 방식 대신, 이름을 클릭해서 바로 선택하는 Selectbox 적용 (타이핑 검색도 지원)
+            selected_product = st.selectbox(
+                "상세 출고 이력을 확인하려는 의약품명을 클릭하여 선택하세요:", 
+                u_prods, 
+                index=0 if u_prods else None,
+                key="p_select"
             )
 
             st.markdown("---")
-            st.subheader("🔍 의약품별 거래처 출고 이력 상세 조회")
-            
-            # 선택 결과 안정적 추출
-            selected_rows = []
-            if selection:
-                if hasattr(selection, 'selection') and hasattr(selection.selection, 'rows'):
-                    selected_rows = list(selection.selection.rows)
-                elif isinstance(selection, dict):
-                    if 'selection' in selection and 'rows' in selection['selection']:
-                        selected_rows = list(selection['selection']['rows'])
-                    elif 'rows' in selection:
-                        selected_rows = list(selection['rows'])
-                elif hasattr(selection, 'rows'):
-                    selected_rows = list(selection.rows)
+            st.subheader("📊 의약품별 거래처 출고 이력 상세 조회")
 
-            if selected_rows:
-                # 사용자가 2개 이상 중복 체크(선택)했을 때 대응책 적용
-                if len(selected_rows) > 1:
-                    st.warning("🚨 **중복 선택 감지:** 의약품은 한 번에 **하나만** 선택해 주세요! (현재 가장 최근에 클릭하신 의약품의 이력을 보여주고 있습니다.)")
-                    selected_row_idx = selected_rows[-1] # 가장 최근에 클릭한 행 매칭
+            if selected_product:
+                # 선택한 의약품의 현재고 및 유효기간 요약 안내
+                prod_info_rows = df_f[df_f['제품명'] == selected_product]
+                if not prod_info_rows.empty:
+                    prod_info = prod_info_rows.iloc[0]
+                    st.info(f"📦 **선택된 의약품:** `{selected_product}`  |  현재고: **{prod_info['재고 수량 (개)']:.0f}개** |  유효기간: **{prod_info['유효기간']}**")
                 else:
-                    selected_row_idx = selected_rows[0]
+                    st.info(f"📦 **선택된 의약품:** `{selected_product}`")
                 
-                if selected_row_idx < len(df_f):
-                    selected_product = df_f.iloc[selected_row_idx]['제품명']
+                # 출고 이력 데이터 매칭 및 출력
+                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
+                p_exp_s = df_inventory[df_inventory['제품명'] == selected_product]['유효기간_표시']
+                p_exp = p_exp_s.values[0] if not p_exp_s.empty else "없음"
+                
+                if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
+                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
+                    df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
+                    df_h['유효기간'] = p_exp
                     
-                    st.markdown(f"📦 **선택된 의약품:** `{selected_product}`")
+                    df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
+                    df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
+                    df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
                     
-                    df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
-                    p_exp_s = df_inventory[df_inventory['제품명'] == selected_product]['유효기간_표시']
-                    p_exp = p_exp_s.values[0] if not p_exp_s.empty else "없음"
+                    st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
                     
-                    if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
-                        df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
-                        df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
-                        df_h['유효기간'] = p_exp
-                        
-                        df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
-                        df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
-                        df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
-                        
-                        st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("✨ 출고 기록이 없습니다.")
+                    # 엑셀 다운로드 기능 추가 제공
+                    csv_data = df_h_disp.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label=f"💾 {selected_product} 출고 이력 다운로드 (CSV)",
+                        data=csv_data,
+                        file_name=f"{selected_product}_출고이력.csv",
+                        mime="text/csv"
+                    )
                 else:
-                    st.info("💡 위의 '창고 전체 현재 재고 현황' 표에서 확인하려는 의약품 행을 마우스로 클릭하시면 상세 이력이 이곳에 표시됩니다.")
+                    st.light_style = True
+                    st.warning("✨ 해당 의약품은 최근 출고 기록이 없습니다.")
             else:
-                st.info("💡 위의 '창고 전체 현재 재고 현황' 표에서 확인하려는 의약품 행을 마우스로 클릭하시면 상세 이력이 이곳에 표시됩니다.")
+                st.info("💡 위의 선택창에서 조회할 의약품명을 클릭해 주세요.")
+
+            st.markdown("---")
+            st.subheader("📋 참고용 창고 전체 재고 리스트")
+            
+            # 리스트 내 서브 검색 기능 제공
+            p_search = st.text_input("🔍 리스트 내에서 의약품명으로 재고 현황 검색:", "", key="p_search")
+            
+            df_f_disp = df_f.copy()
+            if p_search:
+                df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)]
+            
+            # 네모박스(체크기능)를 완전히 제거하고 순수하게 엑셀처럼 쳐다보는 용도의 깔끔한 테이블 노출
+            st.dataframe(df_f_disp, use_container_width=True, hide_index=True)
 else:
     st.warning("📢 데이터 파일이 존재하지 않습니다.")
