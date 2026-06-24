@@ -271,4 +271,42 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 if hasattr(selection, 'selection') and hasattr(selection.selection, 'rows'):
                     selected_rows = selection.selection.rows
                 elif isinstance(selection, dict):
-                    if 'selection' in selection and 'rows
+                    if 'selection' in selection and 'rows' in selection['selection']:
+                        selected_rows = selection['selection']['rows']
+                    elif 'rows' in selection:
+                        selected_rows = selection['rows']
+                elif hasattr(selection, 'rows'):
+                    selected_rows = selection.rows
+
+            # 사용자가 표에서 특정 행을 클릭한 경우
+            if selected_rows:
+                selected_row_idx = selected_rows[0]
+                
+                # 안전장치: 인덱스 범위 초과 방지
+                if selected_row_idx < len(df_f):
+                    selected_product = df_f.iloc[selected_row_idx]['제품명']
+                    
+                    st.markdown(f"📦 **선택된 의약품:** `{selected_product}`")
+                    
+                    df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
+                    p_exp_s = df_inventory[df_inventory['제품명'] == selected_product]['유효기간_표시']
+                    p_exp = p_exp_s.values[0] if not p_exp_s.empty else "없음"
+                    
+                    if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
+                        df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
+                        df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
+                        df_h['유효기간'] = p_exp
+                        
+                        df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
+                        df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
+                        df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
+                        
+                        st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("✨ 출고 기록이 없습니다.")
+                else:
+                    st.info("💡 위의 '창고 전체 현재 재고 현황' 표에서 확인하려는 의약품 행을 마우스로 클릭하시면 상세 이력이 이곳에 표시됩니다.")
+            else:
+                st.info("💡 위의 '창고 전체 현재 재고 현황' 표에서 확인하려는 의약품 행을 마우스로 클릭하시면 상세 이력이 이곳에 표시됩니다.")
+else:
+    st.warning("📢 데이터 파일이 존재하지 않습니다.")
