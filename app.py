@@ -180,4 +180,85 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 else:
                     st.info("✅ 유효기간 10개월 미만 품목이 없습니다.")
 
-        # --- [탭 4] 90일
+        # --- [탭 4] 90일 이상 미출고 (수정 반영) ---
+        with t4:
+            st.header("▶️ 90일 이상 장기 미출고 의약품")
+            if not df_orders.empty and '출고일자' in df_orders.columns:
+                df_l = df_orders.groupby('제품명')['출고일자'].max().reset_index()
+                df_l.columns = ['제품명', '최종일']
+
+                df_chk = pd.merge(df_inventory, df_l, on='제품명', how='left')
+                
+                # 창고에 재고가 남아있는 항목만 대상
+                df_chk = df_chk[df_chk['재고수량'] > 0].copy()
+                
+                # 경과일 및 기록 없음 여부 플래그 계산
+                df_chk['경과일'] = (current_date - df_chk['최종일']).dt.days
+                df_chk['기록없음'] = df_chk['최종일'].isna()
+                
+                # 90일 기준 날짜 설정 및 필터링 (기록이 없거나, 경과일이 90일 이상인 항목)
+                lim_90 = current_date - timedelta(days=90)
+                df_filtered = df_chk[df_chk['기록없음'] | (df_chk['최종일'] <= lim_90)].copy()
+
+                if not df_filtered.empty:
+                    # 정렬 조건: [기록없음]이 True인 항목 우선(내림차순) -> 이후 [경과일]이 큰 순서대로(내림차순)
+                    df_filtered = df_filtered.sort_values(by=['기록없음', '경과일'], ascending=[False, False])
+                    
+                    for idx, row in df_filtered.iterrows():
+                        if row['기록없음']:
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 출고 기록 없음")
+                        else:
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 최종일: {row['최종일'].strftime('%Y-%m-%d')} ({int(row['경과일'])}일 경과)")
+                else:
+                    st.info("✅ 90일 이상 미출고된 장기 재고가 없습니다.")
+            else:
+                st.info("✅ 출고 기록이 없습니다.")
+
+        # --- [탭 5] 전체 현재 재고 ---
+        with t5:
+            st.header("▶️ 창고 전체 현재 재고 현황")
+            p_search = st.text_input("🔍 의약품 검색:", "", key="p_search")
+            
+            df_a_inv = df_inventory.copy()
+            if '유효기간_날짜' in df_a_inv.columns:
+                df_a_inv['유효기간_표시'] = df_a_inv['유효기간_날짜'].dt.strftime('%Y-%m-%d')
+                df_a_inv['유효기간_표시'] = df_a_inv['유효기간_표시'].fillna(df_a_inv['유효기간'].astype(str))
+            else:
+                df_a_inv['유효기간_표시'] = df_a_inv['유효기간'].astype(str)
+                
+            df_f = df_a_inv[['제품명', '재고수량', '유효기간_표시']].copy()
+            df_f.columns = ['제품명', '재고 수량 (개)', '유효기간']
+            
+            if p_search:
+                df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
+            
+            st.markdown(f"📊 **목록:** 공식 재고 `{len(df_f)}`건")
+            st.dataframe(df_f, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            st.subheader("🔍 의약품별 거래처 출고 이력 상세 조회")
+            
+            sel_p = sorted(df_f['제품명'].unique())
+            if sel_p:
+                selected_product = st.selectbox("📦 의약품 선택:", sel_p, key="p_select")
+                
+                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
+                p_exp_s = df_a_inv[df_a_inv['제품명'] == selected_product]['유효기간_표시']
+                p_exp = p_exp_s.values[0] if not p_exp_s.empty else "없음"
+                
+                if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
+                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
+                    df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
+                    df_h['유효기간'] = p_exp
+                    
+                    df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
+                    df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
+                    df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
+                    
+                    st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
+                else:
+                    st.info("✨ 출고 기록이 없습니다.")
+            else:
+                st.info("💡 표시할 의약품이 없습니다.")
+else:
+    st.warning("📢 데이터 파일이 존재하지 않습니다.")
