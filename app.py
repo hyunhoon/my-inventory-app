@@ -239,3 +239,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 else:
                     st.info("✨ 출고 기록이 없습니다.")
             else:
+                st.info("💡 표시할 의약품이 없습니다.")
+else:
+    st.warning("📢 데이터 파일이 존재하지 않습니다.")
