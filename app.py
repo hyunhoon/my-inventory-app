@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import os
 
 # 페이지 설정
-st.set_page_config(page_title="분석 시스템", layout="wide")
+st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 
 st.title("📊 의약품 통합 분석 시스템")
 st.write("데이터를 자동으로 불러와 분석하는 화면입니다.")
@@ -81,7 +81,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         t1, t2, t3, t4, t5 = st.tabs([
             "🏢 매출처별 출고 리스트",
             "⚠️ 주문시기 및 재고부족 알림", 
-            "🚨 유효기간 365일 미만 경고", 
+            "🚨 유효기간 임박 경고", 
             "📦 장기 미출고 재고",
             "📋 전체 현재 재고"
         ])
@@ -168,7 +168,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 데이터가 부족합니다.")
 
-        # --- [탭 3] 유효기간 365일 미만 ---
+        # --- [탭 3] 유효기간 365일 미만 경고 ---
         with t3:
             st.header("▶️ 유효기간 365일 미만 의약품 목록")
             lim_365 = current_date + timedelta(days=365)
@@ -179,7 +179,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     for idx, row in s_exp_sorted.iterrows():
                         rem_d = (row['유효기간_날짜'] - current_date).days
                         
-                        # 180일 미만인 경우 강력 강조 (빨간색 알림창 + 특수 문구)
+                        # 180일 미만인 경우 강력 강조 (빨간색 알림창)
                         if rem_d < 180:
                             st.error(
                                 f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개)\n"
@@ -210,12 +210,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_chk['경과일'] = (current_date - df_chk['최종일']).dt.days
                 df_chk['기록없음'] = df_chk['최종일'].isna()
                 
-                # 90일 기준 날짜 설정 및 필터링 (기록이 없거나, 경과일이 90일 이상인 항목)
+                # 90일 기준 날짜 설정 및 필터링
                 lim_90 = current_date - timedelta(days=90)
                 df_filtered = df_chk[df_chk['기록없음'] | (df_chk['최종일'] <= lim_90)].copy()
 
                 if not df_filtered.empty:
-                    # 정렬 조건: [기록없음]이 True인 항목 우선(내림차순) -> 이후 [경과일]이 큰 순서대로(내림차순)
                     df_filtered = df_filtered.sort_values(by=['기록없음', '경과일'], ascending=[False, False])
                     
                     for idx, row in df_filtered.iterrows():
@@ -238,7 +237,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (중복 선택 원천 차단 버전) ---
+        # --- [탭 5] 전체 현재 재고 (버전 호환성 패치 완료) ---
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             p_search = st.text_input("🔍 의약품 검색:", "", key="p_search")
@@ -249,24 +248,23 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if p_search:
                 df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
             
-            # 인덱스를 리셋하여 매칭 오류 완전 방지
             df_f = df_f.reset_index(drop=True)
             
             st.markdown(f"📊 **목록:** 공식 재고 `{len(df_f)}`건 (아래 표에서 원하는 의약품 **행을 클릭**하면 하단에 상세 출고 이력이 표시됩니다.)")
             
-            # selection_mode="single_row"를 통해 무조건 단 하나의 행만 선택 가능하도록 고정 (중복 체크 방지)
+            # 리스트 구조형태로 넘겨주어 단일 선택 모드가 모든 버전에서 호환되도록 강제 수정
             selection = st.dataframe(
                 df_f, 
                 use_container_width=True, 
                 hide_index=True,
                 on_select="rerun",
-                selection_mode="single_row"
+                selection_mode=["single_row"]
             )
 
             st.markdown("---")
             st.subheader("🔍 의약품별 거래처 출고 이력 상세 조회")
             
-            # 선택 결과 파싱
+            # 선택 결과 안정적 추출
             selected_rows = []
             if selection:
                 if hasattr(selection, 'selection') and hasattr(selection.selection, 'rows'):
@@ -279,11 +277,9 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 elif hasattr(selection, 'rows'):
                     selected_rows = list(selection.rows)
 
-            # 사용자가 표에서 특정 행을 선택한 경우
             if selected_rows:
                 selected_row_idx = selected_rows[0]
                 
-                # 안전장치: 인덱스 범위 초과 방지
                 if selected_row_idx < len(df_f):
                     selected_product = df_f.iloc[selected_row_idx]['제품명']
                     
