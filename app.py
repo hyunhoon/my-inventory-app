@@ -238,7 +238,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (행 클릭 연동으로 수정) ---
+        # --- [탭 5] 전체 현재 재고 (행 클릭 안전 연동 버전) ---
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             p_search = st.text_input("🔍 의약품 검색:", "", key="p_search")
@@ -249,61 +249,26 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if p_search:
                 df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
             
-            # 인덱스를 새로고침해 선택한 행 위치가 엇갈리는 현상을 원천 방지
+            # 인덱스를 리셋하여 매칭 오류 완전 방지
             df_f = df_f.reset_index(drop=True)
             
             st.markdown(f"📊 **목록:** 공식 재고 `{len(df_f)}`건 (아래 표에서 원하는 의약품 **행을 클릭**하면 하단에 상세 출고 이력이 표시됩니다.)")
             
-            # Streamlit 1.35.0+ 버전의 인터랙티브 행 선택 기능 활성화
+            # 버전별 에러 발생을 원천 차단하기 위해 selection_mode 파라미터를 생략하고 기본 선택 기능을 활용
             selection = st.dataframe(
                 df_f, 
                 use_container_width=True, 
                 hide_index=True,
-                on_select="rerun",
-                selection_mode="single_row"
+                on_select="rerun"
             )
 
             st.markdown("---")
             st.subheader("🔍 의약품별 거래처 출고 이력 상세 조회")
             
-            # 라이브러리 버전에 따라 리턴되는 구조(객체형 vs 딕셔너리형)에 맞춰 안전하게 인덱스 추출
+            # 라이브러리 상태 및 객체/딕셔너리 리턴 형태에 맞춰 유연하게 인덱스 추출
             selected_rows = []
             if selection:
-                if isinstance(selection, dict):
-                    if 'selection' in selection and 'rows' in selection['selection']:
-                        selected_rows = selection['selection']['rows']
-                    elif 'rows' in selection:
-                        selected_rows = selection['rows']
-                else:
-                    if hasattr(selection, 'selection') and hasattr(selection.selection, 'rows'):
-                        selected_rows = selection.selection.rows
-                    elif hasattr(selection, 'rows'):
-                        selected_rows = selection.rows
-
-            # 사용자가 표에서 특정 행을 클릭한 경우
-            if selected_rows:
-                selected_row_idx = selected_rows[0]
-                selected_product = df_f.iloc[selected_row_idx]['제품명']
-                
-                st.markdown(f"📦 **선택된 의약품:** `{selected_product}`")
-                
-                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
-                p_exp_s = df_inventory[df_inventory['제품명'] == selected_product]['유효기간_표시']
-                p_exp = p_exp_s.values[0] if not p_exp_s.empty else "없음"
-                
-                if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
-                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
-                    df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
-                    df_h['유효기간'] = p_exp
-                    
-                    df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
-                    df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
-                    df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
-                    
-                    st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
-                else:
-                    st.info("✨ 출고 기록이 없습니다.")
-            else:
-                st.info("💡 위의 '창고 전체 현재 재고 현황' 표에서 확인하려는 의약품 행을 마우스로 클릭하시면 상세 이력이 이곳에 표시됩니다.")
-else:
-    st.warning("📢 데이터 파일이 존재하지 않습니다.")
+                if hasattr(selection, 'selection') and hasattr(selection.selection, 'rows'):
+                    selected_rows = selection.selection.rows
+                elif isinstance(selection, dict):
+                    if 'selection' in selection and 'rows
