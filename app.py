@@ -168,7 +168,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 데이터가 부족합니다.")
 
-        # --- [탭 3] 유효기간 365일 미만 경고 (괄호 오류 미닫힘 완벽 해결) ---
+        # --- [탭 3] 유효기간 365일 미만 경고 ---
         with t3:
             st.header("▶️ 유효기간 365일 미만 의약품 목록")
             lim_365 = current_date + timedelta(days=365)
@@ -231,8 +231,8 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (StreamlitAPIException 완벽 예방 버전) ---
-        with t5:  # tab5 오타 수정 완료
+        # --- [탭 5] 전체 현재 재고 (체크박스 없는 무결점 버전) ---
+        with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             
             # 기본 재고 데이터 구조 준비
@@ -240,42 +240,38 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_f.columns = ['제품명', '재고 수량 (개)', '유효기간']
             df_f = df_f.sort_values(by='제품명').reset_index(drop=True)
             
-            # 리스트 내 서브 검색 기능 제공
-            p_search = st.text_input("🔍 리스트 내에서 의약품명으로 재고 현황 검색:", "", key="p_search")
+            # 검색창 기능 (타이핑 시 표와 하단 클릭 선택창 목록이 동시 필터링됨)
+            p_search = st.text_input("🔍 의약품명 검색 (입력 시 아래 리스트와 선택창이 동시에 좁혀집니다):", "", key="p_search")
             
             df_f_disp = df_f.copy()
             if p_search:
                 df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)].reset_index(drop=True)
             
-            st.markdown("### 📋 참고용 창고 전체 재고 리스트 (확인할 의약품 이름을 클릭하세요)")
+            st.markdown("### 📋 창고 전체 재고 리스트")
             
-            # [🔥 에러 해결 핵심] 버그를 유발하던 selection_mode="single_row" 옵션을 지우고 
-            # 가장 안정적인 기본형 'on_select="rerun"'만 주어 내장 로직으로 행 선택을 구현했습니다.
-            selection = st.dataframe(
+            # [💡 수정 핵심] 상호작용 옵션을 제거하여 체크박스 열 자체를 아예 보이지 않게 처리함 (원하시는 깔끔한 원본 표 형태)
+            st.dataframe(
                 df_f_disp, 
                 use_container_width=True, 
                 hide_index=True,
-                on_select="rerun",
-                key="medicine_table_selector"
+                key="medicine_table_pure_view"
             )
             
-            # 선택된 행 정보를 다각도로 안전하게 추출하는 방어 로직 (딕셔너리/오브젝트 구조 모두 호환)
-            selected_row_idx = None
-            if selection:
-                if hasattr(selection, "selection") and hasattr(selection.selection, "rows") and selection.selection.rows:
-                    selected_row_idx = selection.selection.rows[0]
-                elif isinstance(selection, dict) and "selection" in selection and "rows" in selection["selection"] and selection["selection"]["rows"]:
-                    selected_row_idx = selection["selection"]["rows"][0]
-                elif isinstance(selection, dict) and "rows" in selection and selection["rows"]:
-                    selected_row_idx = selection["rows"][0]
-
             st.markdown("---")
             st.subheader("📊 의약품별 거래처 출고 이력 상세 조회")
 
-            # 표에서 행이 선택되었을 때만 하단 매출처 내역 노출
-            if selected_row_idx is not None and selected_row_idx < len(df_f_disp):
-                selected_product = df_f_disp.iloc[selected_row_idx]['제품명']
-                prod_info = df_f_disp.iloc[selected_row_idx]
+            # 체크박스 대신 표 바로 밑에서 이름을 단 한 번 클릭해서 조회하는 원클릭 셀렉터 구성
+            product_options = ["-- 상세 내용을 확인할 의약품명을 클릭하세요 --"] + list(df_f_disp['제품명'].unique())
+            selected_product = st.selectbox(
+                "👇 확인하고 싶은 의약품명을 목록에서 선택(클릭)해 주세요:", 
+                product_options, 
+                index=0, 
+                key="medicine_click_dropdown"
+            )
+
+            # 셀렉터에서 특정 품목을 클릭했을 때만 상세 내역 노출
+            if selected_product != "-- 상세 내용을 확인할 의약품명을 클릭하세요 --":
+                prod_info = df_f_disp[df_f_disp['제품명'] == selected_product].iloc[0]
                 
                 st.info(f"📦 **선택된 의약품:** `{selected_product}`  |  현재고: **{prod_info['재고 수량 (개)']:.0f}개** |  유효기간: **{prod_info['유효기간']}**")
                 
@@ -305,6 +301,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 else:
                     st.warning("✨ 해당 의약품은 최근 출고 기록이 없습니다.")
             else:
-                st.info("💡 위의 리스트 표에서 상세 출고 매출처를 확인하고 싶은 **의약품의 이름 줄(행)을 마우스로 가볍게 클릭**해 주세요.")
+                st.info("💡 상세 내역을 보시려면 바로 위의 **선택 창을 클릭한 뒤 의약품명을 지정**해 주세요.")
 else:
     st.warning("📢 데이터 파일이 존재하지 않습니다.")
