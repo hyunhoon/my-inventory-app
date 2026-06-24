@@ -231,7 +231,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (원하시는 원클릭 다이렉트 버전) ---
+        # --- [탭 5] 전체 현재 재고 (버전 무관 완벽 클릭 연동형) ---
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             
@@ -241,37 +241,40 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_f = df_f.sort_values(by='제품명').reset_index(drop=True)
             
             # 검색 기능
-            p_search = st.text_input("🔍 의약품 검색 (리스트에서 바로 찾기):", "", key="p_search")
+            p_search = st.text_input("🔍 의약품 검색 (리스트 필터링):", "", key="p_search")
             
             df_f_disp = df_f.copy()
             if p_search:
                 df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)].reset_index(drop=True)
             
             st.markdown("### 📋 창고 전체 재고 리스트")
-            st.caption("💡 아래 리스트에서 확인하고 싶은 **의약품명 줄(Row)을 마우스로 클릭**하시면 하단에 즉시 상세 조회가 나타납니다.")
+            st.caption("💡 아래 표에서 확인하고 싶은 **의약품명 칸(텍스트)을 아무나 마우스로 한 번 클릭**해 보세요! 하단에 즉시 상세 조회가 열립니다.")
             
-            # [🔥 수정 핵심] 체크박스 칸을 완전히 지우고, 오직 '의약품 글자 행'을 클릭하는 동작만 남김
-            selected_rows = st.dataframe(
-                df_f_disp, 
-                use_container_width=True, 
-                hide_index=True,
-                selection_mode="single_row",  # 한 줄만 선택 가능
-                on_select="rerun",            # 클릭하는 순간 화면을 즉시 새로고침하여 반영
-                key="medicine_direct_click_table"
+            # [🔥 핵심 변경] 구버전/신버전 모두 체크박스를 원천 제거하고, 텍스트 셀 클릭만으로 행 번호를 잡아내는 방식
+            edited_df = st.data_editor(
+                df_f_disp,
+                use_container_width=True,
+                hide_index=False,      # 행 번호(인덱스)를 노출하여 클릭 위치를 추적합니다.
+                disabled=True,         # 읽기 전용 모드 적용
+                key="medicine_stable_click_editor"
             )
             
+            # 클릭(포커스)된 위치의 행 번호를 추출하는 로직
+            state = st.session_state.get("medicine_stable_click_editor", {})
+            last_selected_row = None
+            
+            # 유저가 표 안의 셀을 클릭했을 때 행 인덱스 추출
+            if "last_activated_cell" in state and state["last_activated_cell"]:
+                last_selected_row = state["last_activated_cell"].get("row")
+
             st.markdown("---")
             st.subheader("📊 선택한 의약품의 거래처별 출고 이력 상세 조회")
 
-            # 표에서 클릭된 행의 데이터를 가져옴
-            clicked_indices = selected_rows.get("selection", {}).get("rows", [])
-
-            if clicked_indices:
-                # 선택된 행의 의약품 정보 추출
-                row_idx = clicked_indices[0]
-                selected_product = df_f_disp.iloc[row_idx]['제품명']
-                prod_qty = df_f_disp.iloc[row_idx]['재고 수량 (개)']
-                prod_expiry = df_f_disp.iloc[row_idx]['유효기간']
+            # 표에서 정상적으로 행이 클릭되었을 때만 상세 내용을 보여줍니다.
+            if last_selected_row is not None and last_selected_row < len(df_f_disp):
+                selected_product = df_f_disp.iloc[last_selected_row]['제품명']
+                prod_qty = df_f_disp.iloc[last_selected_row]['재고 수량 (개)']
+                prod_expiry = df_f_disp.iloc[last_selected_row]['유효기간']
                 
                 st.info(f"📦 **선택된 의약품:** `{selected_product}`  |  현재고: **{prod_qty:.0f}개** |  유효기간: **{prod_expiry}**")
                 
@@ -301,6 +304,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 else:
                     st.warning("✨ 해당 의약품은 최근 출고 기록이 없습니다.")
             else:
-                st.info("💡 위의 **창고 전체 재고 리스트에서 확인하고 싶은 의약품 이름을 마우스로 클릭**해 주세요.")
+                st.info("💡 위의 **창고 전체 재고 리스트에서 확인하고 싶은 의약품명 줄을 마우스로 클릭**해 주세요.")
 else:
     st.warning("📢 데이터 파일이 존재하지 않습니다.")
