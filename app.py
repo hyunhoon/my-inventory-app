@@ -231,7 +231,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 출고 기록이 없습니다.")
 
-        # --- [탭 5] 전체 현재 재고 (버전 무관 완벽 클릭 연동형) ---
+        # --- [탭 5] 전체 현재 재고 (체크박스 없는 직관적 원클릭 버튼 연동형) ---
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             
@@ -241,69 +241,83 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_f = df_f.sort_values(by='제품명').reset_index(drop=True)
             
             # 검색 기능
-            p_search = st.text_input("🔍 의약품 검색 (리스트 필터링):", "", key="p_search")
+            st.markdown("### 🔍 의약품 찾기")
+            p_search = st.text_input("조회하고 싶은 의약품명을 입력하세요 (예: 비타모):", "", key="p_search")
             
             df_f_disp = df_f.copy()
             if p_search:
                 df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)].reset_index(drop=True)
             
+            # 깔끔하게 리스트 먼저 보여주기 (체크박스 완전 제거됨)
             st.markdown("### 📋 창고 전체 재고 리스트")
-            st.caption("💡 아래 표에서 확인하고 싶은 **의약품명 칸(텍스트)을 아무나 마우스로 한 번 클릭**해 보세요! 하단에 즉시 상세 조회가 열립니다.")
+            st.dataframe(df_f_disp, use_container_width=True, hide_index=True)
             
-            # [🔥 핵심 변경] 구버전/신버전 모두 체크박스를 원천 제거하고, 텍스트 셀 클릭만으로 행 번호를 잡아내는 방식
-            edited_df = st.data_editor(
-                df_f_disp,
-                use_container_width=True,
-                hide_index=False,      # 행 번호(인덱스)를 노출하여 클릭 위치를 추적합니다.
-                disabled=True,         # 읽기 전용 모드 적용
-                key="medicine_stable_click_editor"
-            )
-            
-            # 클릭(포커스)된 위치의 행 번호를 추출하는 로직
-            state = st.session_state.get("medicine_stable_click_editor", {})
-            last_selected_row = None
-            
-            # 유저가 표 안의 셀을 클릭했을 때 행 인덱스 추출
-            if "last_activated_cell" in state and state["last_activated_cell"]:
-                last_selected_row = state["last_activated_cell"].get("row")
-
             st.markdown("---")
-            st.subheader("📊 선택한 의약품의 거래처별 출고 이력 상세 조회")
+            st.markdown("### 👆 원클릭 즉시 상세 조회 패널")
+            
+            # 검색결과 혹은 전체 리스트에서 버튼 리스트 동적 생성
+            if not df_f_disp.empty:
+                st.caption("💡 아래에서 원하시는 **의약품명 글자 버튼을 툭 클릭**하시면 하단에 즉시 상세 내역이 나타납니다.")
+                
+                # 버튼들을 깔끔하게 나열하기 (가로 배열 세팅)
+                # 항목이 많을 수 있으므로 검색어가 있을 때 더 쓰기 편합니다.
+                available_products = df_f_disp['제품명'].tolist()[:20]  # 최대 20개까지만 직관적으로 버튼 노출
+                if len(df_f_disp) > 20:
+                    st.info(f"💡 검색 결과가 많습니다. 더 정확히 보시려면 위의 검색창에 글자를 추가해 주세요. (현재 상위 {len(available_products)}개 표시 중)")
 
-            # 표에서 정상적으로 행이 클릭되었을 때만 상세 내용을 보여줍니다.
-            if last_selected_row is not None and last_selected_row < len(df_f_disp):
-                selected_product = df_f_disp.iloc[last_selected_row]['제품명']
-                prod_qty = df_f_disp.iloc[last_selected_row]['재고 수량 (개)']
-                prod_expiry = df_f_disp.iloc[last_selected_row]['유효기간']
+                # 세션 상태에 선택된 약품 저장용 변수 초기화
+                if "clicked_medicine" not in st.session_state:
+                    st.session_state["clicked_medicine"] = None
+
+                # 가로로 정렬된 글자 버튼들 생성
+                cols = st.columns(4) # 4열 배치
+                for idx, p_name in enumerate(available_products):
+                    with cols[idx % 4]:
+                        if st.button(f"📄 {p_name}", key=f"btn_{idx}", use_container_width=True):
+                            st.session_state["clicked_medicine"] = p_name
+
+                # 상세 보기 활성화 영역
+                selected_product = st.session_state["clicked_medicine"]
                 
-                st.info(f"📦 **선택된 의약품:** `{selected_product}`  |  현재고: **{prod_qty:.0f}개** |  유효기간: **{prod_expiry}**")
-                
-                # 출고 데이터 필터링
-                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
-                
-                if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
-                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
-                    df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
-                    df_h['유효기간'] = prod_expiry
+                st.markdown("---")
+                if selected_product:
+                    st.subheader(f"📊 [{selected_product}] 거래처별 출고 이력 상세 결과")
                     
-                    df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
-                    df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
-                    df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
+                    # 선택된 데이터의 요약 정보 가져오기
+                    prod_info = df_f[df_f['제품명'] == selected_product].iloc[0]
+                    prod_qty = prod_info['재고 수량 (개)']
+                    prod_expiry = prod_info['유효기간']
                     
-                    # 상세 테이블 출력
-                    st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
+                    st.info(f"📦 **선택 품목:** `{selected_product}`  |  현재고: **{prod_qty:.0f}개** |  유효기간: **{prod_expiry}**")
                     
-                    # 다운로드 기능
-                    csv_data = df_h_disp.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(
-                        label=f"💾 {selected_product} 출고 이력 다운로드 (CSV)",
-                        data=csv_data,
-                        file_name=f"{selected_product}_출고이력.csv",
-                        mime="text/csv"
-                    )
+                    # 출고 데이터 필터링
+                    df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
+                    
+                    if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
+                        df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
+                        df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
+                        df_h['유효기간'] = prod_expiry
+                        
+                        df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
+                        df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
+                        df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
+                        
+                        # 상세 테이블 출력
+                        st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
+                        
+                        # 다운로드 기능
+                        csv_data = df_h_disp.to_csv(index=False).encode('utf-8-sig')
+                        st.download_button(
+                            label=f"💾 {selected_product} 출고 이력 다운로드 (CSV)",
+                            data=csv_data,
+                            file_name=f"{selected_product}_출고이력.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning("✨ 해당 의약품은 최근 출고 기록이 없습니다.")
                 else:
-                    st.warning("✨ 해당 의약품은 최근 출고 기록이 없습니다.")
+                    st.info("💡 위의 **원클릭 상세 조회 패널**에서 의약품 이름 버튼을 클릭해 주세요.")
             else:
-                st.info("💡 위의 **창고 전체 재고 리스트에서 확인하고 싶은 의약품명 줄을 마우스로 클릭**해 주세요.")
+                st.warning("🔍 일치하는 의약품이 없습니다.")
 else:
     st.warning("📢 데이터 파일이 존재하지 않습니다.")
