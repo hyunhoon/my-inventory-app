@@ -273,4 +273,39 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             st.subheader("📊 의약품별 거래처 출고 이력 상세 조회")
 
             # 표에서 행이 선택되었을 때만 하단 매출처 내역 노출
-            if selected_row_idx is not None
+            if selected_row_idx is not None and selected_row_idx < len(df_f_disp):
+                # 선택된 행에서 제품명 추출
+                selected_product = df_f_disp.iloc[selected_row_idx]['제품명']
+                prod_info = df_f_disp.iloc[selected_row_idx]
+                
+                st.info(f"📦 **선택된 의약품:** `{selected_product}`  |  현재고: **{prod_info['재고 수량 (개)']:.0f}개** |  유효기간: **{prod_info['유효기간']}**")
+                
+                # 출고 데이터 필터링
+                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
+                
+                if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
+                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
+                    df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
+                    df_h['유효기간'] = prod_info['유효기간']
+                    
+                    df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
+                    df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
+                    df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
+                    
+                    # 해당 의약품의 거래처 출고 리스트 출력
+                    st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
+                    
+                    # 다운로드 기능 제공
+                    csv_data = df_h_disp.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label=f"💾 {selected_product} 출고 이력 다운로드 (CSV)",
+                        data=csv_data,
+                        file_name=f"{selected_product}_출고이력.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("✨ 해당 의약품은 최근 출고 기록이 없습니다.")
+            else:
+                st.info("💡 위의 리스트 표에서 상세 출고 매출처를 확인하고 싶은 **의약품의 이름 줄을 마우스로 클릭**해 주세요.")
+else:
+    st.warning("📢 데이터 파일이 존재하지 않습니다.")
