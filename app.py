@@ -33,7 +33,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         if '매출처' in df_orders.columns:
             df_orders['매출처'] = df_orders['매출처'].fillna('').astype(str).str.strip()
             
-        # [수정 반영] 합계 데이터 및 "금융비용할인" 항목 전면 제외 처리
+        # 합계 데이터 및 "금융비용할인" 항목 전면 제외 처리
         k_word = '합계|합 계|\\[합.*\\]|금융비용할인'
         df_orders = df_orders[(df_orders['제품명'] != '') & (~df_orders['제품명'].str.contains(k_word, na=False))]
         df_inventory = df_inventory[(df_inventory['제품명'] != '') & (~df_inventory['제품명'].str.contains(k_word, na=False))]
@@ -118,7 +118,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 st.info("✅ 분석할 데이터가 없습니다.")
 
-        # --- [탭 2] 주문 시기 및 재고 부족 (의약품별 매출처 거래량 정렬 적용) ---
+        # --- [탭 2] 주문 시기 및 재고 부족 ---
         with t2:
             st.header("▶️ 주문 시기 및 재고 부족 위험")
             if not df_orders.empty and '매출처' in df_orders.columns and '출고일자' in df_orders.columns:
@@ -142,7 +142,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     # 60일 이상 주문 없었던 항목 제외
                     alert = alert[(current_date - alert['r_il']).dt.days < 60].copy()
                     
-                    # [수정 반영] 매출처별 총량이 아닌, '해당 매출처의 해당 의약품 총 거래량' 계산
+                    # 매출처별 총량이 아닌, '해당 매출처의 해당 의약품 총 거래량' 계산
                     p_c_vol = df_orders.groupby(['매출처', '제품명'])['수량'].sum().reset_index(name='품목별거래량')
                     alert = pd.merge(alert, p_c_vol, on=['매출처', '제품명'], how='left')
                     
@@ -180,77 +180,4 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 else:
                     st.info("✅ 유효기간 10개월 미만 품목이 없습니다.")
 
-        # --- [탭 4] 3개월 이상 미출고 ---
-        with t4:
-            st.header("▶️ 3개월 이상 장기 미출고 의약품")
-            if not df_orders.empty and '출고일자' in df_orders.columns:
-                df_l = df_orders.groupby('제품명')['출고일자'].max().reset_index()
-                df_l.columns = ['제품명', '최종일']
-
-                df_chk = pd.merge(df_inventory, df_l, on='제품명', how='left')
-                lim_3 = current_date - timedelta(days=90)
-                has_long = False
-
-                for idx, row in df_chk.iterrows():
-                    if row['재고수량'] <= 0:
-                        continue
-                    if pd.isna(row['최종일']):
-                        has_long = True
-                        st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 출고 기록 없음")
-                    elif row['최종일'] <= lim_3:
-                        has_long = True
-                        passed = (current_date - row['최종일']).days
-                        st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 최종일: {row['최종일'].strftime('%Y-%m-%d')} ({passed}일 경과)")
-                if not has_long:
-                    st.info("✅ 장기 미출고 재고가 없습니다.")
-            else:
-                st.info("✅ 출고 기록이 없습니다.")
-
-        # --- [탭 5] 전체 현재 재고 ---
-        with t5:
-            st.header("▶️ 창고 전체 현재 재고 현황")
-            p_search = st.text_input("🔍 의약품 검색:", "", key="p_search")
-            
-            df_a_inv = df_inventory.copy()
-            if '유효기간_날짜' in df_a_inv.columns:
-                df_a_inv['유효기간_표시'] = df_a_inv['유효기간_날짜'].dt.strftime('%Y-%m-%d')
-                df_a_inv['유효기간_표시'] = df_a_inv['유효기간_표시'].fillna(df_a_inv['유효기간'].astype(str))
-            else:
-                df_a_inv['유효기간_표시'] = df_a_inv['유효기간'].astype(str)
-                
-            df_f = df_a_inv[['제품명', '재고수량', '유효기간_표시']].copy()
-            df_f.columns = ['제품명', '재고 수량 (개)', '유효기간']
-            
-            if p_search:
-                df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
-            
-            st.markdown(f"📊 **목록:** 공식 재고 `{len(df_f)}`건")
-            st.dataframe(df_f, use_container_width=True, hide_index=True)
-
-            st.markdown("---")
-            st.subheader("🔍 의약품별 거래처 출고 이력 상세 조회")
-            
-            sel_p = sorted(df_f['제품명'].unique())
-            if sel_p:
-                selected_product = st.selectbox("📦 의약품 선택:", sel_p, key="p_select")
-                
-                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
-                p_exp_s = df_a_inv[df_a_inv['제품명'] == selected_product]['유효기간_표시']
-                p_exp = p_exp_s.values[0] if not p_exp_s.empty else "없음"
-                
-                if not df_p_ord.empty and '출고일자' in df_p_ord.columns:
-                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
-                    df_h['출고일자_표시'] = df_h['출고일자'].dt.strftime('%Y-%m-%d').fillna("없음")
-                    df_h['유효기간'] = p_exp
-                    
-                    df_h_disp = df_h[['매출처', '출고일자_표시', '수량', '유효기간']].copy()
-                    df_h_disp.columns = ['거래처명', '출고날짜', '출고수량 (개)', '유효기간']
-                    df_h_disp = df_h_disp.sort_values(by='출고날짜', ascending=False)
-                    
-                    st.dataframe(df_h_disp, use_container_width=True, hide_index=True)
-                else:
-                    st.info("✨ 출고 기록이 없습니다.")
-            else:
-                st.info("💡 표시할 의약품이 없습니다.")
-else:
-    st.warning("📢 데이터 파일이 존재하지 않습니다.")
+        # --- [탭 4] 90일
