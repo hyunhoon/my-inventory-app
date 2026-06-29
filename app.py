@@ -197,26 +197,29 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
-            # 1. 제품 검색 기능
+            # 1. 검색 및 단일 선택 로직 (데이터 편집기 대신 selectbox 사용)
             p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
             
-            # 검색어 필터링
+            # 검색 필터링
             if p_search:
-                df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
+                df_f_filtered = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
+            else:
+                df_f_filtered = df_f
+            
+            # 제품 리스트 추출
+            product_list = df_f_filtered['제품명'].unique().tolist()
+            
+            if product_list:
+                s_prod = st.selectbox("조회할 제품을 선택하세요:", product_list)
                 
-            df_f.insert(0, "선택", False)
-            
-            # 2. 데이터 에디터 (체크박스)
-            edited_df = st.data_editor(df_f, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
-            
-            # 3. 선택 로직 (첫 번째 선택 항목만 상세조회)
-            selected_rows = edited_df[edited_df["선택"] == True]
-            if not selected_rows.empty:
-                s_prod = selected_rows.iloc[0]['제품명']
+                # 전체 목록 보기 (참고용)
+                st.dataframe(df_f, use_container_width=True, hide_index=True)
+                
                 st.markdown("---")
                 st.markdown(f"### 📊 [{s_prod}] 출고 이력 상세")
                 
+                # 상세 조회
                 df_p_ord = df_orders[df_orders['제품명'] == s_prod].copy()
                 if not df_p_ord.empty:
                     df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
@@ -224,5 +227,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
                 else:
                     st.info("해당 제품의 출고 이력이 없습니다.")
+            else:
+                st.warning("검색된 제품이 없습니다.")
 else:
     st.error("데이터 파일을 찾을 수 없습니다.")
