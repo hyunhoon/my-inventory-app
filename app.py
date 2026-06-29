@@ -6,7 +6,7 @@ import json # 알림 기록용
 import requests # 텔레그램 전송용
 
 # 텔레그램 설정 (이 부분만 본인의 값으로 바꾸세요)
-TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
+TELEGRAM_TOKEN = "AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
 TELEGRAM_CHAT_ID = "5953515925"
 LOG_FILE = "alert_log.json"
 
@@ -17,8 +17,6 @@ def send_telegram(msg):
         params = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
         requests.get(url, params=params)
     except: pass
-
-send_telegram("테스트 메시지입니다. 봇이 정상 작동 중입니다.")
 
 def load_log():
     if os.path.exists(LOG_FILE):
