@@ -130,10 +130,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         with t2:
             st.header("▶️ 주문 시기 및 재고 부족 위험 (우선순위 정렬)")
-            # 1. 주문 횟수 계산 및 병합
             df_counts = df_orders.groupby(['매출처', '제품명']).size().reset_index(name='order_count')
-            
-            # 2. 주기 계산
             df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
             df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
             df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
@@ -141,23 +138,19 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             cyc = cyc[cyc['p_ju'].notna() & (cyc['p_ju'] > 0)].copy()
             cyc = pd.merge(cyc, df_counts, on=['매출처', '제품명'], how='left')
             
-            # 3. 정렬 로직
             def get_sort_key(row):
                 expected = row['r_il'] + timedelta(days=int(row['p_ju']))
                 days = (expected - current_date).days
                 stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
                 is_low_stock = stk < row['p_am']
-                
-                # 우선순위 부여
-                if days < 0: return (3, days) # 3순위: 날짜 지남 (맨 아래)
-                if row['order_count'] > 3 and is_low_stock: return (0, days) # 1순위: 단골 & 재고부족 & 임박
-                if is_low_stock: return (1, days) # 2순위: 재고부족 & 임박
-                return (2, days) # 기타
+                if days < 0: return (3, days)
+                if row['order_count'] > 3 and is_low_stock: return (0, days)
+                if is_low_stock: return (1, days)
+                return (2, days)
 
             cyc['sort_key'] = cyc.apply(get_sort_key, axis=1)
             cyc = cyc.sort_values('sort_key')
             
-            # 4. 출력
             for _, row in cyc.iterrows():
                 expected = row['r_il'] + timedelta(days=int(row['p_ju']))
                 days = (expected - current_date).days
@@ -170,14 +163,35 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     else: st.info(f"💡 {msg}")
 
         with t3:
-            st.header("▶️ 유효기간 365일 미만")
+            st.header("▶️ 유효기간 365일 미만 의약품 목록")
+            lim_365 = current_date + timedelta(days=365)
             if '유효기간_날짜' in df_inventory.columns:
-                s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['재고수량'] > 0)].sort_values('유효기간_날짜')
+                s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['유효기간_날짜'] <= lim_365) & (df_inventory['재고수량'] > 0)].sort_values(by='유효기간_날짜')
                 for _, row in s_exp.iterrows():
-                    st.warning(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']}")
+                    rem_d = (row['유효기간_날짜'] - current_date).days
+                    if rem_d < 180: st.error(f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} (**{rem_d}일 남음**)")
+                    else: st.warning(f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} ({rem_d}일 남음)")
 
         with t4:
-            st.info("장기 미출고 품목 표시란입니다.")
+            st.header("▶️ 90일 이상 장기 미출고 의약품")
+            if not df_orders.empty and '출고일자' in df_orders.columns:
+                df_l = df_orders.groupby('제품명')['출고일자'].max().reset_index()
+                df_l.columns = ['제품명', '최종일']
+                df_chk = pd.merge(df_inventory, df_l, on='제품명', how='left')
+                df_chk = df_chk[df_chk['재고수량'] > 0].copy()
+                df_chk['경과일'] = (current_date - df_chk['최종일']).dt.days
+                df_chk['기록없음'] = df_chk['최종일'].isna()
+                lim_90 = current_date - timedelta(days=90)
+                df_filtered = df_chk[df_chk['기록없음'] | (df_chk['최종일'] <= lim_90)].copy()
+                if not df_filtered.empty:
+                    df_filtered = df_filtered.sort_values(by=['기록없음', '경과일'], ascending=[False, False])
+                    for idx, row in df_filtered.iterrows():
+                        yuhyo = row['유효기간_표시'] if '유효기간_표시' in row and str(row['유효기간_표시']) != 'nan' else "기록없음"
+                        if row['기록없음']:
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 출고 기록 없음")
+                        else:
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 최종일: {row['최종일'].strftime('%Y-%m-%d')} (**{int(row['경과일'])}일 경과**)")
+
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
