@@ -136,6 +136,10 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
             cyc = df_o_srt.groupby(['매출처', '제품명']).agg(p_ju=('주기', 'mean'), r_il=('출고일자', 'max'), p_am=('수량', 'mean')).reset_index()
             cyc = cyc[cyc['p_ju'].notna() & (cyc['p_ju'] > 0)].copy()
+            
+            # [제외 필터 적용: 하모닐란, 엔커버]
+            cyc = cyc[~cyc['제품명'].str.contains('하모닐란|엔커버', na=False)]
+            
             cyc = pd.merge(cyc, df_counts, on=['매출처', '제품명'], how='left')
             
             def get_sort_key(row):
@@ -166,7 +170,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             st.header("▶️ 유효기간 365일 미만 의약품 목록")
             lim_365 = current_date + timedelta(days=365)
             if '유효기간_날짜' in df_inventory.columns:
-                s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['유효기간_날짜'] <= lim_365) & (df_inventory['재고수량'] > 0)].sort_values(by='유효기간_날짜')
+                # [제외 필터 적용: 하모닐란, 엔커버]
+                s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & 
+                                     (df_inventory['유효기간_날짜'] <= lim_365) & 
+                                     (df_inventory['재고수량'] > 0) & 
+                                     (~df_inventory['제품명'].str.contains('하모닐란|엔커버', na=False))].sort_values(by='유효기간_날짜')
                 for _, row in s_exp.iterrows():
                     rem_d = (row['유효기간_날짜'] - current_date).days
                     if rem_d < 180: st.error(f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} (**{rem_d}일 남음**)")
