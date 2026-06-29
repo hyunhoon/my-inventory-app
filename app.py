@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import os
+
+# --- [추가된 부분: 자동 알림 기능] ---
 import requests
 import schedule
 import time
@@ -9,8 +11,8 @@ import threading
 import json
 import holidays
 
-# --- [추가된 부분: 자동 알림 시스템 설정] ---
-TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI" 
+# 텔레그램 설정 (본인의 토큰과 ID로 변경하세요)
+TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
 TELEGRAM_CHAT_ID = "-1004415384295"
 LOG_FILE = "alert_log.json"
 
@@ -28,7 +30,7 @@ def save_logs(logs):
 def check_and_send(key, msg):
     logs = load_logs()
     today = datetime.now().strftime("%Y-%m-%d")
-    if key in logs: return False # 이미 보냈으면 안 보냄
+    if key in logs: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     params = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
@@ -41,47 +43,35 @@ def check_and_send(key, msg):
     return False
 
 def run_automated_check():
-    # 휴일 및 주말 제외
     kr_holidays = holidays.KR()
     now = datetime.now()
     if now.weekday() >= 5 or now in kr_holidays: return
     
-    # 데이터 로드
-    if not (os.path.exists("출고데이터.xls") and os.path.exists("재고데이터.xls")): return
-    df_orders = pd.read_excel("출고데이터.xls")
-    df_inventory = pd.read_excel("재고데이터.xls")
+    ORDER_FILE = "출고데이터.xls"
+    INVENTORY_FILE = "재고데이터.xls"
+    if not (os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE)): return
     
-    # 필수 데이터 정리
+    df_orders = pd.read_excel(ORDER_FILE)
+    df_inventory = pd.read_excel(INVENTORY_FILE)
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
     
-    # 1. 주문 주기 계산
+    # 주문시기/재고 로직
     df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
     df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
     df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
     cyc = df_o_srt.groupby(['매출처', '제품명']).agg(p_ju=('주기', 'mean'), r_il=('출고일자', 'max'), p_am=('수량', 'mean')).reset_index()
     cyc = cyc[cyc['p_ju'].notna() & (cyc['p_ju'] > 0)]
-    
     for _, row in cyc.iterrows():
         expected = row['r_il'] + timedelta(days=int(row['p_ju']))
         days_left = (expected - now).days
-        if days_left == 5: # 5일 남았을 때
+        if days_left == 5:
             stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
             if stk < row['p_am']:
                 msg = f"⚠️ [주문 알림] {row['매출처']} - {row['제품명']}\n예상일: {expected.strftime('%Y-%m-%d')}\n재고: {stk:.0f} < 주문량: {row['p_am']:.0f}"
                 check_and_send(f"{now.strftime('%Y-%m-%d')}_{row['매출처']}_{row['제품명']}_ORDER", msg)
 
-    # 2. 유효기간 체크
-    if '유효기간' in df_inventory.columns:
-        df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간'].astype(str), format='%Y%m%d', errors='coerce')
-        for _, row in df_inventory[df_inventory['유효기간_날짜'].notna()].iterrows():
-            rem_d = (row['유효기간_날짜'] - now).days
-            if rem_d < 180:
-                msg = f"💥 [유효기간 알림] {row['제품명']}\n만료까지 {rem_d}일 남음 ({row['유효기간_날짜'].strftime('%Y-%m-%d')})"
-                check_and_send(f"{now.strftime('%Y-%m-%d')}_{row['제품명']}_EXPIRY", msg)
-
-# 스케줄러 실행 (백그라운드)
 def scheduler_thread():
     schedule.every().day.at("09:30").do(run_automated_check)
     while True:
@@ -89,9 +79,9 @@ def scheduler_thread():
         time.sleep(60)
 
 threading.Thread(target=scheduler_thread, daemon=True).start()
-# --- [여기까지가 자동 알림 기능] ---
+# ------------------------------------
 
-# 페이지 설정 (기존 코드 시작)
+# 페이지 설정
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 
 st.title("📊 의약품 통합 분석 시스템")
@@ -243,7 +233,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                         else:
                             st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 최종일: {row['최종일'].strftime('%Y-%m-%d')} (**{int(row['경과일'])}일 경과**)")
 
-        # [탭 5] 전체 현재 재고
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
