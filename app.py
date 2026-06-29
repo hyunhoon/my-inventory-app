@@ -105,7 +105,8 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
         
         if '유효기간' in df_inventory.columns:
-            df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().split('.')[0]
+            # 수정된 부분: .str.split().str[] 사용
+            df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
             df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
             df_inventory['유효기간_표시'] = df_inventory['유효기간_날짜'].dt.strftime('%Y-%m-%d').fillna(df_inventory['유효기간'].astype(str))
         else: df_inventory['유효기간_표시'] = "기록없음"
@@ -124,7 +125,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             f_cust = [c for c in u_cust if c_search.lower() in c.lower()] if c_search else u_cust
             
             df_cust_list = pd.DataFrame({'매출처': f_cust})
-            df_cust_list.insert(0, "선택", False) # 체크박스 앞 배치
+            df_cust_list.insert(0, "선택", False)
             df_cust_list['선택'] = df_cust_list['매출처'] == st.session_state['selected_customer']
             
             edited_cust = st.data_editor(df_cust_list, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
@@ -139,7 +140,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 s_cust = st.session_state['selected_customer']
                 st.markdown(f"### 📅 {s_cust} 상세 내역")
                 df_c_ord = df_orders[df_orders['매출처'] == s_cust].copy()
-                # 컬럼 제한
                 df_c_ord = df_c_ord[['출고일자', '매출처', '제품명', '수량']]
                 st.dataframe(df_c_ord.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
@@ -217,7 +217,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
             if p_search: df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
             
-            df_f.insert(0, "선택", False) # 체크박스 앞 배치
+            df_f.insert(0, "선택", False)
             df_f['선택'] = df_f['제품명'] == st.session_state['selected_product']
             
             edited_df = st.data_editor(df_f, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
