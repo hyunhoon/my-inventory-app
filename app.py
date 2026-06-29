@@ -100,7 +100,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         df_inventory['재고수량'] = pd.to_numeric(df_inventory['재고수량'], errors='coerce').fillna(0)
         df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
         
-        # 유효기간 설정
         if '유효기간' in df_inventory.columns:
             df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
             df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
@@ -136,10 +135,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
             cyc = df_o_srt.groupby(['매출처', '제품명']).agg(p_ju=('주기', 'mean'), r_il=('출고일자', 'max'), p_am=('수량', 'mean')).reset_index()
             cyc = cyc[cyc['p_ju'].notna() & (cyc['p_ju'] > 0)].copy()
-            
-            # [제외 필터 적용: 하모닐란, 엔커버]
             cyc = cyc[~cyc['제품명'].str.contains('하모닐란|엔커버', na=False)]
-            
             cyc = pd.merge(cyc, df_counts, on=['매출처', '제품명'], how='left')
             
             def get_sort_key(row):
@@ -170,7 +166,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             st.header("▶️ 유효기간 365일 미만 의약품 목록")
             lim_365 = current_date + timedelta(days=365)
             if '유효기간_날짜' in df_inventory.columns:
-                # [제외 필터 적용: 하모닐란, 엔커버]
                 s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & 
                                      (df_inventory['유효기간_날짜'] <= lim_365) & 
                                      (df_inventory['재고수량'] > 0) & 
@@ -202,8 +197,32 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
+            # 1. 제품 검색 기능
+            p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
+            
+            # 검색어 필터링
+            if p_search:
+                df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
+                
             df_f.insert(0, "선택", False)
-            st.data_editor(df_f, use_container_width=True, hide_index=True)
+            
+            # 2. 데이터 에디터 (체크박스)
+            edited_df = st.data_editor(df_f, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
+            
+            # 3. 선택 로직 (첫 번째 선택 항목만 상세조회)
+            selected_rows = edited_df[edited_df["선택"] == True]
+            if not selected_rows.empty:
+                s_prod = selected_rows.iloc[0]['제품명']
+                st.markdown("---")
+                st.markdown(f"### 📊 [{s_prod}] 출고 이력 상세")
+                
+                df_p_ord = df_orders[df_orders['제품명'] == s_prod].copy()
+                if not df_p_ord.empty:
+                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
+                    df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
+                    st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
+                else:
+                    st.info("해당 제품의 출고 이력이 없습니다.")
 else:
     st.error("데이터 파일을 찾을 수 없습니다.")
