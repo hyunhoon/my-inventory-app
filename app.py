@@ -184,3 +184,4 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_f.insert(0, "선택", False)
             st.data_editor(df_f, use_container_width=True, hide_index=True)
 else:
+    st.error("데이터 파일을 찾을 수 없습니다.")
