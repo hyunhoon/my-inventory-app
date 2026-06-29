@@ -6,7 +6,7 @@ import requests  # 텔레그램 알림을 위해 추가
 
 # --- [텔레그램 설정] 여기에 본인의 정보를 입력하세요 ---
 TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
-TELEGRAM_CHAT_ID = "-5366390383" 
+TELEGRAM_CHAT_ID = "-1004415384295" 
 # ----------------------------------------------------
 
 # 텔레그램 전송 함수
