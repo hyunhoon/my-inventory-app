@@ -181,4 +181,31 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     for idx, row in df_filtered.iterrows():
                         yuhyo = row['유효기간_표시'] if '유효기간_표시' in row and str(row['유효기간_표시']) != 'nan' else "기록없음"
                         if row['기록없음']:
-                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 출고 기록 없음")
+                        else:
+                            st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 최종일: {row['최종일'].strftime('%Y-%m-%d')} (**{int(row['경과일'])}일 경과**)")
+
+        with t5:
+            st.header("▶️ 창고 전체 현재 재고 현황")
+            df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
+            df_f.columns = ['제품명', '재고 수량 (개)', '유효기간']
+            df_f = df_f.sort_values(by='제품명').reset_index(drop=True)
+            st.markdown("### 🔍 의약품 찾기")
+            p_search = st.text_input("조회할 품목:", "", key="p_search")
+            df_f_disp = df_f.copy()
+            if p_search: df_f_disp = df_f_disp[df_f_disp['제품명'].str.contains(p_search, case=False, na=False)]
+            df_f_disp.insert(0, "선택", False)
+            st.markdown("### 📋 창고 전체 재고 리스트")
+            edited_df = st.data_editor(df_f_disp, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
+            selected_rows = edited_df[edited_df["선택"] == True]
+            if not selected_rows.empty:
+                selected_product = selected_rows.iloc[0]['제품명']
+                st.markdown("---")
+                st.subheader(f"📊 [{selected_product}] 상세 결과")
+                df_p_ord = df_orders[df_orders['제품명'] == selected_product].copy()
+                if not df_p_ord.empty:
+                    df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
+                    df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
+                    st.dataframe(df_h, use_container_width=True, hide_index=True)
+else:
+    st.error("데이터 파일을 찾을 수 없습니다.")
