@@ -89,8 +89,8 @@ def load_data(file_path):
     return pd.read_excel(file_path)
 
 # 세션 상태 초기화
-if 'selected_product' not in st.session_state:
-    st.session_state['selected_product'] = None
+if 'selected_customer' not in st.session_state: st.session_state['selected_customer'] = None
+if 'selected_product' not in st.session_state: st.session_state['selected_product'] = None
 
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     current_date = datetime.now()
@@ -105,7 +105,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
         
         if '유효기간' in df_inventory.columns:
-            df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
+            df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().split('.')[0]
             df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
             df_inventory['유효기간_표시'] = df_inventory['유효기간_날짜'].dt.strftime('%Y-%m-%d').fillna(df_inventory['유효기간'].astype(str))
         else: df_inventory['유효기간_표시'] = "기록없음"
@@ -118,21 +118,33 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         t1, t2, t3, t4, t5 = st.tabs(["🏢 매출처별 출고 리스트", "⚠️ 주문시기 및 재고부족 알림", "🚨 유효기간 임박 경고", "📦 장기 미출고 재고", "📋 전체 현재 재고"])
         
         with t1:
+            st.header("🏢 매출처별 출고 리스트")
             u_cust = sorted([c for c in df_orders['매출처'].unique() if c != ''])
             c_search = st.text_input("🔍 매출처 검색:", "", key="c_search")
             f_cust = [c for c in u_cust if c_search.lower() in c.lower()] if c_search else u_cust
+            
             df_cust_list = pd.DataFrame({'매출처': f_cust})
-            df_cust_list.insert(0, "선택", False)
+            df_cust_list.insert(0, "선택", False) # 체크박스 앞 배치
+            df_cust_list['선택'] = df_cust_list['매출처'] == st.session_state['selected_customer']
+            
             edited_cust = st.data_editor(df_cust_list, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
-            selected_rows = edited_cust[edited_cust["선택"] == True]
-            if not selected_rows.empty:
-                s_cust = selected_rows.iloc[0]['매출처']
+            
+            changed = edited_cust[edited_cust['선택'] != df_cust_list['선택']]
+            if not changed.empty:
+                new_checked = changed[changed['선택'] == True]
+                st.session_state['selected_customer'] = new_checked.iloc[0]['매출처'] if not new_checked.empty else None
+                st.rerun()
+
+            if st.session_state['selected_customer']:
+                s_cust = st.session_state['selected_customer']
                 st.markdown(f"### 📅 {s_cust} 상세 내역")
                 df_c_ord = df_orders[df_orders['매출처'] == s_cust].copy()
+                # 컬럼 제한
+                df_c_ord = df_c_ord[['출고일자', '매출처', '제품명', '수량']]
                 st.dataframe(df_c_ord.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
         with t2:
-            st.header("▶️ 주문 시기 및 재고 부족 위험 (우선순위 정렬)")
+            st.header("▶️ 주문 시기 및 재고 부족 위험")
             df_counts = df_orders.groupby(['매출처', '제품명']).size().reset_index(name='order_count')
             df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
             df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
@@ -203,38 +215,23 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             st.header("▶️ 창고 전체 현재 재고 현황")
             p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
+            if p_search: df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
             
-            if p_search:
-                df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
-            
-            # 현재 세션 상태에 따라 체크박스 설정
+            df_f.insert(0, "선택", False) # 체크박스 앞 배치
             df_f['선택'] = df_f['제품명'] == st.session_state['selected_product']
             
-            edited_df = st.data_editor(
-                df_f, 
-                column_config={"선택": st.column_config.CheckboxColumn(required=True)}, 
-                use_container_width=True, 
-                hide_index=True
-            )
+            edited_df = st.data_editor(df_f, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
             
-            # 체크박스 변경 감지 로직
             changed = edited_df[edited_df['선택'] != df_f['선택']]
             if not changed.empty:
-                # 새로 체크된 것이 있는지 확인
                 new_checked = changed[changed['선택'] == True]
-                if not new_checked.empty:
-                    st.session_state['selected_product'] = new_checked.iloc[0]['제품명']
-                else:
-                    # 체크 해제된 경우
-                    st.session_state['selected_product'] = None
-                st.rerun() # UI 즉시 갱신
+                st.session_state['selected_product'] = new_checked.iloc[0]['제품명'] if not new_checked.empty else None
+                st.rerun()
             
-            # 상세 정보 표시
             if st.session_state['selected_product']:
                 s_prod = st.session_state['selected_product']
                 st.markdown("---")
                 st.markdown(f"### 📊 [{s_prod}] 출고 이력 상세")
-                
                 df_p_ord = df_orders[df_orders['제품명'] == s_prod].copy()
                 if not df_p_ord.empty:
                     df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
