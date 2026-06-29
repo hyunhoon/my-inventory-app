@@ -88,6 +88,10 @@ def load_data(file_path):
     if file_path.endswith('.csv'): return pd.read_csv(file_path)
     return pd.read_excel(file_path)
 
+# 세션 상태 초기화
+if 'selected_product' not in st.session_state:
+    st.session_state['selected_product'] = None
+
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     current_date = datetime.now()
     try:
@@ -197,29 +201,40 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         with t5:
             st.header("▶️ 창고 전체 현재 재고 현황")
-            # 1. 검색 및 단일 선택 로직 (데이터 편집기 대신 selectbox 사용)
             p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
             df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
             
-            # 검색 필터링
             if p_search:
-                df_f_filtered = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
-            else:
-                df_f_filtered = df_f
+                df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
             
-            # 제품 리스트 추출
-            product_list = df_f_filtered['제품명'].unique().tolist()
+            # 현재 세션 상태에 따라 체크박스 설정
+            df_f['선택'] = df_f['제품명'] == st.session_state['selected_product']
             
-            if product_list:
-                s_prod = st.selectbox("조회할 제품을 선택하세요:", product_list)
-                
-                # 전체 목록 보기 (참고용)
-                st.dataframe(df_f, use_container_width=True, hide_index=True)
-                
+            edited_df = st.data_editor(
+                df_f, 
+                column_config={"선택": st.column_config.CheckboxColumn(required=True)}, 
+                use_container_width=True, 
+                hide_index=True
+            )
+            
+            # 체크박스 변경 감지 로직
+            changed = edited_df[edited_df['선택'] != df_f['선택']]
+            if not changed.empty:
+                # 새로 체크된 것이 있는지 확인
+                new_checked = changed[changed['선택'] == True]
+                if not new_checked.empty:
+                    st.session_state['selected_product'] = new_checked.iloc[0]['제품명']
+                else:
+                    # 체크 해제된 경우
+                    st.session_state['selected_product'] = None
+                st.rerun() # UI 즉시 갱신
+            
+            # 상세 정보 표시
+            if st.session_state['selected_product']:
+                s_prod = st.session_state['selected_product']
                 st.markdown("---")
                 st.markdown(f"### 📊 [{s_prod}] 출고 이력 상세")
                 
-                # 상세 조회
                 df_p_ord = df_orders[df_orders['제품명'] == s_prod].copy()
                 if not df_p_ord.empty:
                     df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
@@ -227,7 +242,5 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
                 else:
                     st.info("해당 제품의 출고 이력이 없습니다.")
-            else:
-                st.warning("검색된 제품이 없습니다.")
 else:
     st.error("데이터 파일을 찾을 수 없습니다.")
