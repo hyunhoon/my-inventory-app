@@ -2,34 +2,31 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import os
-import json # 알림 기록용
-import requests # 텔레그램 전송용
+import requests  # 텔레그램 알림을 위해 추가
 
-# 텔레그램 설정 (이 부분만 본인의 값으로 바꾸세요)
+# --- [텔레그램 설정] 여기에 본인의 정보를 입력하세요 ---
 TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
-TELEGRAM_CHAT_ID = "-5366390383"
-LOG_FILE = "alert_log.json"
+TELEGRAM_CHAT_ID = "-5366390383" 
+# ----------------------------------------------------
 
-# --- [텔레그램 알림 기능 추가 (기존 코드와 독립적으로 작동)] ---
+# 텔레그램 전송 함수
 def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    params = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        params = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
-        requests.get(url, params=params)
-    except: pass
-
-send_telegram("테스트 메시지입니다. 봇이 정상 작동 중입니다.")
-
-def load_log():
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, 'r', encoding='utf-8') as f: return json.load(f)
-    return []
-
-def save_log(log):
-    with open(LOG_FILE, 'w', encoding='utf-8') as f: json.dump(log, f)
+        response = requests.get(url, params=params)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
 
 # 페이지 설정
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
+
+# 사이드바에 테스트 버튼 추가
+st.sidebar.title("⚙️ 설정")
+if st.sidebar.button("🚨 텔레그램 연결 테스트"):
+    res = send_telegram("테스트 메시지: 시스템이 정상 연결되었습니다.")
+    st.sidebar.write("결과:", res)
 
 st.title("📊 의약품 통합 분석 시스템")
 st.write("데이터를 자동으로 불러와 분석하는 화면입니다.")
@@ -58,6 +55,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         if '매출처' in df_orders.columns:
             df_orders['매출처'] = df_orders['매출처'].fillna('').astype(str).str.strip()
             
+        # 합계 데이터 및 "금융비용할인" 항목 전면 제외 처리
         k_word = '합계|합 계|\\[합.*\\]|금융비용할인'
         df_orders = df_orders[(df_orders['제품명'] != '') & (~df_orders['제품명'].str.contains(k_word, na=False))]
         df_inventory = df_inventory[(df_inventory['제품명'] != '') & (~df_inventory['제품명'].str.contains(k_word, na=False))]
@@ -65,14 +63,17 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         if '매출처' in df_orders.columns:
             df_orders = df_orders[~df_orders['매출처'].str.contains('금융비용할인', na=False)]
         
+        # 숫자 데이터 변환
         if '수량' in df_orders.columns:
             df_orders['수량'] = pd.to_numeric(df_orders['수량'], errors='coerce').fillna(0)
         if '재고수량' in df_inventory.columns:
             df_inventory['재고수량'] = pd.to_numeric(df_inventory['재고수량'], errors='coerce').fillna(0)
             
+        # 날짜형 변환
         if '출고일자' in df_orders.columns:
             df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
 
+        # 재고 소진 품목 보정
         exist_p = df_inventory['제품명'].unique()
         all_p = df_orders['제품명'].unique()
         miss_p = [p for p in all_p if p not in exist_p and p != '']
@@ -81,6 +82,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             m_df = pd.DataFrame({'제품명': miss_p, '재고수량': 0.0, '유효기간': '소진 (기록없음)'})
             df_inventory = pd.concat([df_inventory, m_df], ignore_index=True)
 
+        # 유효기간 날짜 파싱
         if '유효기간' in df_inventory.columns:
             df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
             df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
@@ -126,7 +128,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         with t2:
             st.header("▶️ 주문 시기 및 재고 부족 위험")
-            alert_log = load_log() # 알림 로그 로드
             if not df_orders.empty and '매출처' in df_orders.columns and '출고일자' in df_orders.columns:
                 df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
                 df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
@@ -144,33 +145,27 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     for idx, row in alert.iterrows():
                         stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
                         if stk < row['p_am']:
-                            st.warning(f"**[{row['매출처']}]** {row['제품명']}\n• 예상일: {row['예상일'].strftime('%Y-%m-%d')} ({row['남은일']}일 남음)\n• 주문량: {row['p_am']:.0f}개 | 재고: {stk:.0f}개")
-                            
-                            # 알림 로직
-                            alert_key = f"order_{row['매출처']}_{row['제품명']}"
-                            if alert_key not in alert_log:
-                                send_telegram(f"⚠️ [재고부족 알림]\n{row['매출처']} - {row['제품명']}\n재고: {stk:.0f}개")
-                                alert_log.append(alert_key)
-                                save_log(alert_log)
+                            msg = f"[{row['매출처']}] {row['제품명']}\n예상일: {row['예상일'].strftime('%Y-%m-%d')} ({row['남은일']}일 남음)\n주문량: {row['p_am']:.0f}개 | 재고: {stk:.0f}개"
+                            st.warning(f"**{msg}**")
+                            if st.button(f"텔레그램 전송: {row['제품명']}", key=f"btn_{idx}"):
+                                res = send_telegram(msg)
+                                st.write(res)
 
         with t3:
             st.header("▶️ 유효기간 365일 미만 의약품 목록")
-            alert_log = load_log()
             lim_365 = current_date + timedelta(days=365)
             if '유효기간_날짜' in df_inventory.columns:
                 s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['유효기간_날짜'] <= lim_365) & (df_inventory['재고수량'] > 0)]
                 for idx, row in s_exp.sort_values(by='유효기간_날짜').iterrows():
                     rem_d = (row['유효기간_날짜'] - current_date).days
+                    msg = f"[유효기간임박] {row['제품명']} ({row['재고수량']:.0f}개)\n유효기간: {row['유효기간_표시']} ({rem_d}일 남음)"
                     if rem_d < 180: 
-                        st.error(f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} (**{rem_d}일 남음**)")
-                        # 알림 로직
-                        alert_key = f"exp_{row['제품명']}"
-                        if alert_key not in alert_log:
-                            send_telegram(f"🚨 [유효기간 임박]\n{row['제품명']}\n유효기간 {rem_d}일 남음")
-                            alert_log.append(alert_key)
-                            save_log(alert_log)
+                        st.error(f"💥 **[초긴급 - 180일 미만]** {msg}")
                     else: 
-                        st.warning(f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} ({rem_d}일 남음)")
+                        st.warning(f"⚠️ **[주의 - 1년 미만]** {msg}")
+                    
+                    if st.button(f"알림 전송", key=f"exp_{idx}"):
+                        send_telegram(msg)
 
         with t4:
             st.header("▶️ 90일 이상 장기 미출고 의약품")
