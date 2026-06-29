@@ -1,4 +1,3 @@
-send_telegram("테스트 메시지입니다. 봇이 정상 작동 중입니다.")
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -18,6 +17,8 @@ def send_telegram(msg):
         params = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
         requests.get(url, params=params)
     except: pass
+
+send_telegram("테스트 메시지입니다. 봇이 정상 작동 중입니다.")
 
 def load_log():
     if os.path.exists(LOG_FILE):
