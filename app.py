@@ -7,7 +7,7 @@ import time
 import threading
 import json
 import holidays
-import pytz
+import pytz  # 한국 시간 처리를 위해 추가
 
 # --- [자동 알림 시스템] ---
 TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
@@ -147,21 +147,32 @@ def render_t2(df_orders, df_inventory, current_date):
     cyc = cyc[cyc['p_ju'].notna() & (cyc['p_ju'] > 0)].copy()
     cyc = cyc[~cyc['제품명'].str.contains('하모닐란|엔커버', na=False)]
     cyc = pd.merge(cyc, df_counts, on=['매출처', '제품명'], how='left')
+    
+    # 1. 예상일 및 남은 일수 계산
+    cyc['expected'] = cyc['r_il'] + pd.to_timedelta(cyc['p_ju'].astype(int), unit='D')
+    cyc['days'] = (cyc['expected'] - current_date).dt.days
+    
+    # 2. 필터링: -5일 초과(지난 건) ~ 10일 이하(남은 건)
+    # (예상일이 5일 지난 건까지 포함, 6일 지난 것부터 삭제 / 10일 넘게 남은 것은 안 보여줌)
+    cyc = cyc[(cyc['days'] >= -5) & (cyc['days'] <= 10)]
+
     def get_sort_key(row):
-        expected = row['r_il'] + timedelta(days=int(row['p_ju']))
-        days = (expected - current_date).days
+        days = row['days']
         stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
         is_low_stock = stk < row['p_am']
         if days < 0: return (3, days)
         if row['order_count'] > 3 and is_low_stock: return (0, days)
         if is_low_stock: return (1, days)
         return (2, days)
+        
     cyc['sort_key'] = cyc.apply(get_sort_key, axis=1)
     cyc = cyc.sort_values('sort_key')
+    
     for _, row in cyc.iterrows():
-        expected = row['r_il'] + timedelta(days=int(row['p_ju']))
-        days = (expected - current_date).days
+        expected = row['expected']
+        days = row['days']
         stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
+        
         if days < 0: st.error(f"❌ **[날짜 경과]** {row['매출처']} - {row['제품명']} (예상일: {expected.strftime('%Y-%m-%d')})")
         elif stk < row['p_am']:
             msg = f"**[{'★단골' if row['order_count'] > 3 else '일반'}]** {row['매출처']} - {row['제품명']}\n• 예상일: {expected.strftime('%Y-%m-%d')} ({days}일 남음)\n• 재고: {stk:.0f} < 주문량: {row['p_am']:.0f}"
