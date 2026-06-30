@@ -3,11 +3,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 import os
 import requests
-import schedule
 import time
 import threading
 import json
 import holidays
+import pytz  # 한국 시간 처리를 위해 추가
 
 # --- [자동 알림 시스템] ---
 TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
@@ -41,34 +41,48 @@ def check_and_send(key, msg):
     return False
 
 def run_automated_check():
+    # 1. 한국 시간 설정
+    kst = pytz.timezone('Asia/Seoul')
+    now_kst = datetime.now(kst)
+    
+    # 2. 실행 시간 체크: 한국 시간 오전 9시 30분에만 실행
+    if not (now_kst.hour == 9 and now_kst.minute == 30):
+        return
+
+    # 3. 주말/공휴일 체크
     kr_holidays = holidays.KR()
-    now = datetime.now()
-    if now.weekday() >= 5 or now in kr_holidays: return
+    if now_kst.weekday() >= 5 or now_kst.strftime("%Y-%m-%d") in kr_holidays: 
+        return
+
     ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
     if not (os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE)): return
+    
     df_orders = pd.read_excel(ORDER_FILE)
     df_inventory = pd.read_excel(INVENTORY_FILE)
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
+    
     df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
     df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
     df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
+    
     cyc = df_o_srt.groupby(['매출처', '제품명']).agg(p_ju=('주기', 'mean'), r_il=('출고일자', 'max'), p_am=('수량', 'mean')).reset_index()
     cyc = cyc[cyc['p_ju'].notna() & (cyc['p_ju'] > 0)]
+    
     for _, row in cyc.iterrows():
         expected = row['r_il'] + timedelta(days=int(row['p_ju']))
-        days_left = (expected - now).days
+        days_left = (expected - now_kst.replace(tzinfo=None)).days
         if days_left == 5:
             stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
             if stk < row['p_am']:
                 msg = f"⚠️ [주문 알림] {row['매출처']} - {row['제품명']}\n예상일: {expected.strftime('%Y-%m-%d')}\n재고: {stk:.0f} < 주문량: {row['p_am']:.0f}"
-                check_and_send(f"{now.strftime('%Y-%m-%d')}_{row['매출처']}_{row['제품명']}_ORDER", msg)
+                check_and_send(f"{now_kst.strftime('%Y-%m-%d')}_{row['매출처']}_{row['제품명']}_ORDER", msg)
 
 def scheduler_thread():
-    schedule.every().day.at("09:30").do(run_automated_check)
+    # 1분마다 체크 함수를 호출하여 한국 시간 9시 30분을 감지
     while True:
-        schedule.run_pending()
+        run_automated_check()
         time.sleep(60)
 
 threading.Thread(target=scheduler_thread, daemon=True).start()
@@ -77,27 +91,21 @@ threading.Thread(target=scheduler_thread, daemon=True).start()
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 st.title("📊 의약품 통합 분석 시스템")
 
-# --- 프래그먼트 정의 (st.rerun 제거됨) ---
+# --- 프래그먼트 정의 ---
 @st.fragment
 def render_t1(df_orders):
     st.header("🏢 매출처별 출고 리스트")
     u_cust = sorted([c for c in df_orders['매출처'].unique() if c != ''])
     c_search = st.text_input("🔍 매출처 검색:", "", key="c_search_t1")
     f_cust = [c for c in u_cust if c_search.lower() in c.lower()] if c_search else u_cust
-    
     df_cust_list = pd.DataFrame({'매출처': f_cust})
     df_cust_list.insert(0, "선택", False)
-    # 현재 선택된 것 반영
     df_cust_list['선택'] = df_cust_list['매출처'] == st.session_state.get('selected_customer')
-    
     edited_cust = st.data_editor(df_cust_list, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
-    
     changed = edited_cust[edited_cust['선택'] != df_cust_list['선택']]
     if not changed.empty:
         new_checked = changed[changed['선택'] == True]
         st.session_state['selected_customer'] = new_checked.iloc[0]['매출처'] if not new_checked.empty else None
-        # st.rerun() 제거됨! Fragment가 자동으로 UI를 갱신함
-    
     if st.session_state.get('selected_customer'):
         s_cust = st.session_state['selected_customer']
         st.markdown(f"### 📅 {s_cust} 상세 내역")
@@ -108,7 +116,6 @@ def render_t1(df_orders):
 @st.fragment
 def render_t2(df_orders, df_inventory, current_date):
     st.header("▶️ 주문 시기 및 재고 부족 위험")
-    # ... (기존 로직 동일) ...
     df_counts = df_orders.groupby(['매출처', '제품명']).size().reset_index(name='order_count')
     df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
     df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
