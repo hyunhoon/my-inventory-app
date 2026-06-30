@@ -3,5 +3,6 @@ pandas
 requests
 schedule
 holidays
-openpyxl
+pytz
 xlrd
+openpyxl
