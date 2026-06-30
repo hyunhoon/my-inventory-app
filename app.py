@@ -7,7 +7,7 @@ import time
 import threading
 import json
 import holidays
-import pytz  # 한국 시간 처리를 위해 추가
+import pytz
 
 # --- [자동 알림 시스템] ---
 TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
@@ -28,7 +28,9 @@ def save_logs(logs):
 def check_and_send(key, msg):
     logs = load_logs()
     today = datetime.now().strftime("%Y-%m-%d")
-    if key in logs: return False
+    # 오늘 이미 보낸 알림 키라면 전송하지 않음
+    if logs.get(key) == today: return False
+    
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     params = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
@@ -44,14 +46,20 @@ def run_automated_check():
     # 1. 한국 시간 설정
     kst = pytz.timezone('Asia/Seoul')
     now_kst = datetime.now(kst)
+    today = now_kst.strftime("%Y-%m-%d")
     
     # 2. 실행 시간 체크: 한국 시간 오전 9시 30분에만 실행
     if not (now_kst.hour == 9 and now_kst.minute == 30):
         return
 
-    # 3. 주말/공휴일 체크
+    # 3. 당일 실행 여부 체크 (중복 방지)
+    logs = load_logs()
+    if logs.get("LAST_RUN_DATE") == today:
+        return
+
+    # 4. 주말/공휴일 체크
     kr_holidays = holidays.KR()
-    if now_kst.weekday() >= 5 or now_kst.strftime("%Y-%m-%d") in kr_holidays: 
+    if now_kst.weekday() >= 5 or today in kr_holidays: 
         return
 
     ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
@@ -63,6 +71,7 @@ def run_automated_check():
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
     
+    # --- [주문 알림 로직] ---
     df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
     df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
     df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
@@ -77,10 +86,24 @@ def run_automated_check():
             stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
             if stk < row['p_am']:
                 msg = f"⚠️ [주문 알림] {row['매출처']} - {row['제품명']}\n예상일: {expected.strftime('%Y-%m-%d')}\n재고: {stk:.0f} < 주문량: {row['p_am']:.0f}"
-                check_and_send(f"{now_kst.strftime('%Y-%m-%d')}_{row['매출처']}_{row['제품명']}_ORDER", msg)
+                check_and_send(f"{today}_{row['매출처']}_{row['제품명']}_ORDER", msg)
+
+    # --- [유효기간 알림 로직 추가] ---
+    if '유효기간' in df_inventory.columns:
+        df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
+        df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
+        lim_180 = now_kst.replace(tzinfo=None) + timedelta(days=180)
+        s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['유효기간_날짜'] <= lim_180) & (df_inventory['재고수량'] > 0)]
+        for _, row in s_exp.iterrows():
+            rem_d = (row['유효기간_날짜'] - now_kst.replace(tzinfo=None)).days
+            msg = f"🚨 [유효기간 임박] {row['제품명']}\n재고: {row['재고수량']:.0f}개\n남은 기간: {rem_d}일"
+            check_and_send(f"{today}_{row['제품명']}_EXP", msg)
+
+    # 당일 실행 완료 기록
+    logs["LAST_RUN_DATE"] = today
+    save_logs(logs)
 
 def scheduler_thread():
-    # 1분마다 체크 함수를 호출하여 한국 시간 9시 30분을 감지
     while True:
         run_automated_check()
         time.sleep(60)
