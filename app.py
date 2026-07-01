@@ -240,9 +240,18 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     df_inventory = pd.read_excel(INVENTORY_FILE)
 
     # [운송비 제거 로직]
+    # 1. 컬럼이 있다면 제거
     for df in [df_orders, df_inventory]:
         if '운송비' in df.columns:
             df.drop(columns=['운송비'], inplace=True)
+    
+    # 2. 제품명이 '운송비'인 행(Row) 자체를 데이터에서 필터링하여 제거
+    df_orders = df_orders[df_orders['제품명'] != '운송비']
+    df_inventory = df_inventory[df_inventory['제품명'] != '운송비']
+
+    df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
+    df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
+    # ... (이하 동일)
 
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
