@@ -7,7 +7,7 @@ import time
 import threading
 import json
 import holidays
-import pytz  # 한국 시간 처리를 위해 추가
+import pytz
 
 # --- [자동 알림 시스템] ---
 TELEGRAM_TOKEN = "8738343974:AAFrFB26q547kfnj9-xRwHnyVj1qRs0KdlI"
@@ -48,11 +48,11 @@ def run_automated_check():
     now_kst = datetime.now(kst)
     today = now_kst.strftime("%Y-%m-%d")
     
-    # 2. 실행 시간 체크: 한국 시간 오전 9시 30분에만 실행
+    # 2. 실행 시간 체크
     if not (now_kst.hour == 9 and now_kst.minute == 30):
         return
 
-    # 3. 당일 실행 여부 체크 (중복 방지)
+    # 3. 당일 실행 여부 체크
     logs = load_logs()
     if logs.get("LAST_RUN_DATE") == today:
         return
@@ -67,6 +67,12 @@ def run_automated_check():
     
     df_orders = pd.read_excel(ORDER_FILE)
     df_inventory = pd.read_excel(INVENTORY_FILE)
+    
+    # [운송비 제거 로직]
+    for df in [df_orders, df_inventory]:
+        if '운송비' in df.columns:
+            df.drop(columns=['운송비'], inplace=True)
+            
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
@@ -88,7 +94,7 @@ def run_automated_check():
                 msg = f"⚠️ [주문 알림] {row['매출처']} - {row['제품명']}\n예상일: {expected.strftime('%Y-%m-%d')}\n재고: {stk:.0f} < 주문량: {row['p_am']:.0f}"
                 check_and_send(f"{today}_{row['매출처']}_{row['제품명']}_ORDER", msg)
 
-    # --- [유효기간 알림 로직 추가] ---
+    # --- [유효기간 알림 로직] ---
     if '유효기간' in df_inventory.columns:
         df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
         df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
@@ -99,7 +105,6 @@ def run_automated_check():
             msg = f"🚨 [유효기간 임박] {row['제품명']}\n재고: {row['재고수량']:.0f}개\n남은 기간: {rem_d}일"
             check_and_send(f"{today}_{row['제품명']}_EXP", msg)
 
-    # 당일 실행 완료 기록
     logs["LAST_RUN_DATE"] = today
     save_logs(logs)
 
@@ -114,7 +119,6 @@ threading.Thread(target=scheduler_thread, daemon=True).start()
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 st.title("📊 의약품 통합 분석 시스템")
 
-# --- 프래그먼트 정의 ---
 @st.fragment
 def render_t1(df_orders):
     st.header("🏢 매출처별 출고 리스트")
@@ -148,12 +152,8 @@ def render_t2(df_orders, df_inventory, current_date):
     cyc = cyc[~cyc['제품명'].str.contains('하모닐란|엔커버', na=False)]
     cyc = pd.merge(cyc, df_counts, on=['매출처', '제품명'], how='left')
     
-    # 1. 예상일 및 남은 일수 계산
     cyc['expected'] = cyc['r_il'] + pd.to_timedelta(cyc['p_ju'].astype(int), unit='D')
     cyc['days'] = (cyc['expected'] - current_date).dt.days
-    
-    # 2. 필터링: -5일 초과(지난 건) ~ 10일 이하(남은 건)
-    # (예상일이 5일 지난 건까지 포함, 6일 지난 것부터 삭제 / 10일 넘게 남은 것은 안 보여줌)
     cyc = cyc[(cyc['days'] >= -5) & (cyc['days'] <= 10)]
 
     def get_sort_key(row):
@@ -238,6 +238,12 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     current_date = datetime.now()
     df_orders = pd.read_excel(ORDER_FILE)
     df_inventory = pd.read_excel(INVENTORY_FILE)
+
+    # [운송비 제거 로직]
+    for df in [df_orders, df_inventory]:
+        if '운송비' in df.columns:
+            df.drop(columns=['운송비'], inplace=True)
+
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['매출처'] = df_orders['매출처'].fillna('').astype(str).str.strip()
