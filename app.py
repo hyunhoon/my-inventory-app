@@ -122,7 +122,6 @@ st.title("📊 의약품 통합 분석 시스템")
 @st.fragment
 def render_t1(df_orders):
     st.header("🏢 매출처별 출고 리스트")
-    # ⚠️ 스크린샷으로 보여주신 TypeError 해결을 위해 모든 값을 문자로 강제 변환합니다.
     u_cust = sorted([str(c) for c in df_orders['매출처'].unique() if str(c).strip() != ''])
     c_search = st.text_input("🔍 매출처 검색:", "", key="c_search_t1")
     f_cust = [c for c in u_cust if c_search.lower() in c.lower()] if c_search else u_cust
@@ -233,12 +232,18 @@ def render_t5(df_inventory, df_orders):
             df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
             st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
-# 🏥 --- [새로 추가된 의료기 전용 탭 함수] --- 🏥
+# 🏥 --- [새로 추가된 의료기 전용 탭 함수 (제품그룹 기준)] --- 🏥
 @st.fragment
 def render_t6(df_orders):
     st.header("🏥 의료기기 월별 출고 상세 내역")
-    # '의료기' 또는 '의료기기'가 포함된 제품만 추출
-    df_med = df_orders[df_orders['제품명'].str.contains('의료기', na=False)].copy()
+    
+    # 엑셀 파일에 '제품그룹' 열이 존재하는지 먼저 확인
+    if '제품그룹' not in df_orders.columns:
+        st.error("⚠️ 출고데이터에 '제품그룹' 열(Column)을 찾을 수 없습니다. 엑셀 파일을 확인해 주세요.")
+        return
+        
+    # '제품그룹' 열에서 '의료기' 문자가 포함된 데이터만 추출
+    df_med = df_orders[df_orders['제품그룹'].str.contains('의료기', na=False)].copy()
     
     if df_med.empty:
         st.info("데이터 내에 의료기(기) 관련 출고 내역이 없습니다.")
@@ -277,6 +282,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     # 데이터 정제 (결측치, 공백, 타입 변환)
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
+    
+    # ⚠️ 제품그룹 열이 존재한다면 문자열로 정제
+    if '제품그룹' in df_orders.columns:
+        df_orders['제품그룹'] = df_orders['제품그룹'].fillna('').astype(str).str.strip()
+        
     df_orders['매출처'] = df_orders['매출처'].fillna('').astype(str).str.strip()
     df_orders['수량'] = pd.to_numeric(df_orders['수량'], errors='coerce').fillna(0)
     df_inventory['재고수량'] = pd.to_numeric(df_inventory['재고수량'], errors='coerce').fillna(0)
