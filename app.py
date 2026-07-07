@@ -232,35 +232,46 @@ def render_t5(df_inventory, df_orders):
             df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
             st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
-# 🏥 --- [새로 추가된 의료기 전용 탭 함수 (제품그룹 기준)] --- 🏥
+# 🏥 --- [완전 분리된 의료기기 월별 내역] --- 🏥
 @st.fragment
 def render_t6(df_orders):
-    st.header("🏥 의료기기 월별 출고 상세 내역")
+    st.header("🏥 의료기기 월별 상세 출고 내역")
     
-    # 엑셀 파일에 '제품그룹' 열이 존재하는지 먼저 확인
     if '제품그룹' not in df_orders.columns:
         st.error("⚠️ 출고데이터에 '제품그룹' 열(Column)을 찾을 수 없습니다. 엑셀 파일을 확인해 주세요.")
         return
         
-    # '제품그룹' 열에서 '의료기' 문자가 포함된 데이터만 추출
+    # '제품그룹' 기준 필터링
     df_med = df_orders[df_orders['제품그룹'].str.contains('의료기', na=False)].copy()
     
     if df_med.empty:
-        st.info("데이터 내에 의료기(기) 관련 출고 내역이 없습니다.")
+        st.info("데이터 내에 의료기 관련 출고 내역이 없습니다.")
         return
         
-    # '출고일자'에서 년-월(YYYY-MM)만 추출하여 새로운 열 생성
-    df_med['출고월'] = df_med['출고일자'].dt.strftime('%Y-%m')
+    # 출고일자를 '년-월-일' 형식으로 명확하게 표기하기 위한 열 추가
+    df_med['출고일자_표시'] = df_med['출고일자'].dt.strftime('%Y-%m-%d')
+    # 그룹을 묶기 위한 '년-월' 열 추가
+    df_med['분류월'] = df_med['출고일자'].dt.strftime('%Y년 %m월')
     
-    # 월별, 매출처별, 제품명별 수량 합계 산출
-    df_med_summary = df_med.groupby(['출고월', '매출처', '제품명'])['수량'].sum().reset_index()
+    # 최신 날짜가 위로 오도록 전체 정렬
+    df_med = df_med.sort_values(by='출고일자', ascending=False)
     
-    # 최신 월이 위로 오도록 정렬 (월은 내림차순, 매출처/제품명은 오름차순)
-    df_med_summary = df_med_summary.sort_values(by=['출고월', '매출처', '제품명'], ascending=[False, True, True])
+    # 존재하는 월 목록 추출 (중복 제거)
+    unique_months = df_med['분류월'].unique()
     
-    # 화면에 깔끔하게 표기
-    st.dataframe(df_med_summary, use_container_width=True, hide_index=True)
-
+    # 월별로 화면을 분리해서 표기
+    for month in unique_months:
+        st.subheader(f"📅 {month}")
+        
+        # 해당 월의 데이터만 뽑아냄
+        month_data = df_med[df_med['분류월'] == month]
+        
+        # 화면에 보여줄 열만 선택 ('출고일자_표시', '매출처', '제품명', '수량')
+        display_data = month_data[['출고일자_표시', '매출처', '제품명', '수량']].copy()
+        display_data.columns = ['출고일자', '매출처', '제품명', '수량'] # 헤더 이름 깔끔하게 변경
+        
+        st.dataframe(display_data, use_container_width=True, hide_index=True)
+        st.markdown("---") # 월과 월 사이에 시각적인 구분선 추가
 
 # --- 메인 실행 ---
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
@@ -270,20 +281,17 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     df_inventory = pd.read_excel(INVENTORY_FILE)
 
     # [운송비 제거 로직]
-    # 1. 컬럼이 있다면 제거
     for df in [df_orders, df_inventory]:
         if '운송비' in df.columns:
             df.drop(columns=['운송비'], inplace=True)
     
-    # 2. 제품명이 '운송비'인 행(Row) 자체를 데이터에서 필터링하여 제거
     df_orders = df_orders[df_orders['제품명'] != '운송비']
     df_inventory = df_inventory[df_inventory['제품명'] != '운송비']
 
-    # 데이터 정제 (결측치, 공백, 타입 변환)
+    # 데이터 정제
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     
-    # ⚠️ 제품그룹 열이 존재한다면 문자열로 정제
     if '제품그룹' in df_orders.columns:
         df_orders['제품그룹'] = df_orders['제품그룹'].fillna('').astype(str).str.strip()
         
@@ -300,7 +308,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     else: 
         df_inventory['유효기간_표시'] = "기록없음"
     
-    # 탭 구성 (의료기 탭(t6) 추가됨)
+    # 탭 구성 
     t1, t2, t3, t4, t5, t6 = st.tabs(["🏢 매출처별 출고 리스트", "⚠️ 주문시기 및 재고부족 알림", "🚨 유효기간 임박 경고", "📦 장기 미출고 재고", "📋 전체 현재 재고", "🏥 의료기기 월별 출고"])
     
     with t1: render_t1(df_orders)
