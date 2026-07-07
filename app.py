@@ -232,10 +232,10 @@ def render_t5(df_inventory, df_orders):
             df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
             st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
-# 🏥 --- [완전 분리된 의료기기 월별 내역] --- 🏥
+# 🏥 --- [개선된 의료기기 월별 선택창 내역] --- 🏥
 @st.fragment
 def render_t6(df_orders):
-    st.header("🏥 의료기기 월별 상세 출고 내역")
+    st.header("🏥 의료기기 월별 출고 상세 내역")
     
     if '제품그룹' not in df_orders.columns:
         st.error("⚠️ 출고데이터에 '제품그룹' 열(Column)을 찾을 수 없습니다. 엑셀 파일을 확인해 주세요.")
@@ -256,22 +256,26 @@ def render_t6(df_orders):
     # 최신 날짜가 위로 오도록 전체 정렬
     df_med = df_med.sort_values(by='출고일자', ascending=False)
     
-    # 존재하는 월 목록 추출 (중복 제거)
+    # 존재하는 월 목록 추출 (중복 제거) 및 선택창 생성
     unique_months = df_med['분류월'].unique()
     
-    # 월별로 화면을 분리해서 표기
-    for month in unique_months:
-        st.subheader(f"📅 {month}")
+    # 선택창(Selectbox) 렌더링
+    selected_month = st.selectbox("📅 조회할 년-월을 선택하세요:", unique_months)
+    
+    # 사용자가 월을 선택한 경우에만 아래 표기
+    if selected_month:
+        st.markdown("---")
+        st.subheader(f"✅ {selected_month} 출고 내역")
         
-        # 해당 월의 데이터만 뽑아냄
-        month_data = df_med[df_med['분류월'] == month]
+        # 선택한 월의 데이터만 필터링
+        month_data = df_med[df_med['분류월'] == selected_month]
         
-        # 화면에 보여줄 열만 선택 ('출고일자_표시', '매출처', '제품명', '수량')
+        # 화면에 보여줄 열만 선택
         display_data = month_data[['출고일자_표시', '매출처', '제품명', '수량']].copy()
         display_data.columns = ['출고일자', '매출처', '제품명', '수량'] # 헤더 이름 깔끔하게 변경
         
+        # 최종 표 렌더링
         st.dataframe(display_data, use_container_width=True, hide_index=True)
-        st.markdown("---") # 월과 월 사이에 시각적인 구분선 추가
 
 # --- 메인 실행 ---
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
