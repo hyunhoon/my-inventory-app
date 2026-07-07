@@ -112,7 +112,6 @@ threading.Thread(target=scheduler_thread, daemon=True).start()
 
 # --- [UI 메인 코드] ---
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
-st.title("📊 의약품 통합 분석 시스템")
 
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
@@ -120,14 +119,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     df_orders = pd.read_excel(ORDER_FILE)
     df_inventory = pd.read_excel(INVENTORY_FILE)
 
-    # 1. 운송비 완벽 제거
+    # 1. 데이터 기본 정제
     for df in [df_orders, df_inventory]:
         if '운송비' in df.columns:
             df.drop(columns=['운송비'], inplace=True)
     df_orders = df_orders[df_orders['제품명'].astype(str) != '운송비']
     df_inventory = df_inventory[df_inventory['제품명'].astype(str) != '운송비']
 
-    # 2. 데이터 정제 (결측치, 타입 변환)
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     
@@ -139,7 +137,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     df_inventory['재고수량'] = pd.to_numeric(df_inventory['재고수량'], errors='coerce').fillna(0)
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
     
-    # 3. 유효기간 처리
     if '유효기간' in df_inventory.columns:
         df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
         df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
@@ -147,13 +144,28 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     else: 
         df_inventory['유효기간_표시'] = "기록없음"
     
-    # 4. 탭 구성
-    t1, t2, t3, t4, t5, t6 = st.tabs(["🏢 매출처별 출고 리스트", "⚠️ 주문시기 및 재고부족 알림", "🚨 유효기간 임박 경고", "📦 장기 미출고 재고", "📋 전체 현재 재고", "🏥 의료기기 월별 출고"])
+    # ==========================================
+    # 📌 사이드바 메뉴 생성 (버그 원천 차단)
+    # ==========================================
+    st.sidebar.title("📌 시스템 메뉴")
+    menu = st.sidebar.radio(
+        "조회할 항목을 선택하세요:",
+        ["🏢 매출처별 출고 리스트", 
+         "⚠️ 주문 시기 및 재고 부족 위험", 
+         "🚨 유효기간 임박 경고 (365일 미만)", 
+         "📦 장기 미출고 재고 (90일 이상)", 
+         "📋 창고 전체 현재 재고 현황", 
+         "🏥 의료기기 월별 출고 상세 내역"]
+    )
     
-    # --- [탭 1: 매출처별 출고 리스트] ---
-    with t1:
-        st.header("🏢 매출처별 출고 리스트")
-        # TypeError 방지를 위해 반드시 str 변환 후 빈칸 체크
+    # 화면 상단에 선택한 메뉴 이름 표시
+    st.title(menu)
+    st.markdown("---")
+
+    # ==========================================
+    # 📌 선택된 메뉴에 해당하는 화면만 렌더링
+    # ==========================================
+    if menu == "🏢 매출처별 출고 리스트":
         u_cust = sorted([str(c) for c in df_orders['매출처'].unique() if str(c).strip() != 'nan' and str(c).strip() != ''])
         c_search = st.text_input("🔍 매출처 검색:", "", key="c_search_t1")
         f_cust = [c for c in u_cust if c_search.lower() in c.lower()] if c_search else u_cust
@@ -176,9 +188,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_c_ord = df_c_ord[['출고일자', '매출처', '제품명', '수량']]
             st.dataframe(df_c_ord.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
-    # --- [탭 2: 주문 시기 및 재고 부족 위험] ---
-    with t2:
-        st.header("▶️ 주문 시기 및 재고 부족 위험")
+    elif menu == "⚠️ 주문 시기 및 재고 부족 위험":
         df_counts = df_orders.groupby(['매출처', '제품명']).size().reset_index(name='order_count')
         df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
         df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
@@ -216,9 +226,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 if row['order_count'] > 3: st.warning(f"🔥 {msg}")
                 else: st.info(f"💡 {msg}")
 
-    # --- [탭 3: 유효기간 임박 경고] ---
-    with t3:
-        st.header("▶️ 유효기간 365일 미만 의약품 목록")
+    elif menu == "🚨 유효기간 임박 경고 (365일 미만)":
         lim_365 = current_date + timedelta(days=365)
         if '유효기간_날짜' in df_inventory.columns:
             s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['유효기간_날짜'] <= lim_365) & (df_inventory['재고수량'] > 0) & (~df_inventory['제품명'].str.contains('하모닐란|엔커버', na=False))].sort_values(by='유효기간_날짜')
@@ -227,9 +235,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 if rem_d < 180: st.error(f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} (**{rem_d}일 남음**)")
                 else: st.warning(f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} ({rem_d}일 남음)")
 
-    # --- [탭 4: 장기 미출고 재고] ---
-    with t4:
-        st.header("▶️ 90일 이상 장기 미출고 의약품")
+    elif menu == "📦 장기 미출고 재고 (90일 이상)":
         if not df_orders.empty and '출고일자' in df_orders.columns:
             df_l = df_orders.groupby('제품명')['출고일자'].max().reset_index()
             df_l.columns = ['제품명', '최종일']
@@ -247,9 +253,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     if row['기록없음']: st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 출고 기록 없음")
                     else: st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 최종일: {row['최종일'].strftime('%Y-%m-%d')} (**{int(row['경과일'])}일 경과**)")
 
-    # --- [탭 5: 전체 현재 재고] ---
-    with t5:
-        st.header("▶️ 창고 전체 현재 재고 현황")
+    elif menu == "📋 창고 전체 현재 재고 현황":
         p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
         df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
         
@@ -276,10 +280,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
                 st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
-    # --- [탭 6: 의료기기 월별 출고] ---
-    with t6:
-        st.header("🏥 의료기기 월별 출고 상세 내역")
-        
+    elif menu == "🏥 의료기기 월별 출고 상세 내역":
         if '제품그룹' not in df_orders.columns:
             st.error("⚠️ 출고데이터에 '제품그룹' 열(Column)을 찾을 수 없습니다.")
         else:
