@@ -73,6 +73,10 @@ def run_automated_check():
         if '운송비' in df.columns:
             df.drop(columns=['운송비'], inplace=True)
             
+    # 제품명에서 운송비 제거
+    df_orders = df_orders[df_orders['제품명'].astype(str) != '운송비']
+    df_inventory = df_inventory[df_inventory['제품명'].astype(str) != '운송비']
+            
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
@@ -232,7 +236,7 @@ def render_t5(df_inventory, df_orders):
             df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
             st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
 
-# 🏥 --- [개선된 의료기기 월별 선택창 내역] --- 🏥
+# 🏥 --- [새로 추가된 의료기기 탭: 제품그룹 기준, 년월 선택창] --- 🏥
 @st.fragment
 def render_t6(df_orders):
     st.header("🏥 의료기기 월별 출고 상세 내역")
@@ -241,7 +245,7 @@ def render_t6(df_orders):
         st.error("⚠️ 출고데이터에 '제품그룹' 열(Column)을 찾을 수 없습니다. 엑셀 파일을 확인해 주세요.")
         return
         
-    # '제품그룹' 기준 필터링
+    # '제품그룹' 열에서 '의료기'가 포함된 데이터만 추출
     df_med = df_orders[df_orders['제품그룹'].str.contains('의료기', na=False)].copy()
     
     if df_med.empty:
@@ -250,32 +254,38 @@ def render_t6(df_orders):
         
     # 출고일자를 '년-월-일' 형식으로 명확하게 표기하기 위한 열 추가
     df_med['출고일자_표시'] = df_med['출고일자'].dt.strftime('%Y-%m-%d')
-    # 그룹을 묶기 위한 '년-월' 열 추가
+    
+    # 선택창 그룹을 묶기 위한 '년-월' 열 추가
     df_med['분류월'] = df_med['출고일자'].dt.strftime('%Y년 %m월')
     
-    # 최신 날짜가 위로 오도록 전체 정렬
-    df_med = df_med.sort_values(by='출고일자', ascending=False)
+    # 존재하는 월 목록 추출 및 정렬 (가장 최신 달이 맨 위에 오도록)
+    unique_months = sorted([m for m in df_med['분류월'].unique() if str(m) != 'nan'], reverse=True)
     
-    # 존재하는 월 목록 추출 (중복 제거) 및 선택창 생성
-    unique_months = df_med['분류월'].unique()
-    
-    # 선택창(Selectbox) 렌더링
+    if not unique_months:
+        st.info("출고 날짜 데이터가 없습니다.")
+        return
+
+    # 년월 선택 드롭다운 박스 생성
     selected_month = st.selectbox("📅 조회할 년-월을 선택하세요:", unique_months)
     
-    # 사용자가 월을 선택한 경우에만 아래 표기
+    # 사용자가 월을 선택한 경우에만 해당 내역 표시
     if selected_month:
         st.markdown("---")
         st.subheader(f"✅ {selected_month} 출고 내역")
         
         # 선택한 월의 데이터만 필터링
-        month_data = df_med[df_med['분류월'] == selected_month]
+        month_data = df_med[df_med['분류월'] == selected_month].copy()
         
-        # 화면에 보여줄 열만 선택
+        # 최신 날짜가 위로 오도록 정렬
+        month_data = month_data.sort_values(by='출고일자', ascending=False)
+        
+        # 화면에 보여줄 열만 선택 (출고 날짜를 '일'까지 모두 포함)
         display_data = month_data[['출고일자_표시', '매출처', '제품명', '수량']].copy()
         display_data.columns = ['출고일자', '매출처', '제품명', '수량'] # 헤더 이름 깔끔하게 변경
         
         # 최종 표 렌더링
         st.dataframe(display_data, use_container_width=True, hide_index=True)
+
 
 # --- 메인 실행 ---
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
@@ -285,14 +295,16 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     df_inventory = pd.read_excel(INVENTORY_FILE)
 
     # [운송비 제거 로직]
+    # 1. 컬럼이 있다면 제거
     for df in [df_orders, df_inventory]:
         if '운송비' in df.columns:
             df.drop(columns=['운송비'], inplace=True)
     
-    df_orders = df_orders[df_orders['제품명'] != '운송비']
-    df_inventory = df_inventory[df_inventory['제품명'] != '운송비']
+    # 2. 제품명이 '운송비'인 행(Row) 자체를 데이터에서 필터링하여 제거
+    df_orders = df_orders[df_orders['제품명'].astype(str) != '운송비']
+    df_inventory = df_inventory[df_inventory['제품명'].astype(str) != '운송비']
 
-    # 데이터 정제
+    # 데이터 정제 (결측치, 공백, 타입 변환)
     df_orders['제품명'] = df_orders['제품명'].fillna('').astype(str).str.strip()
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     
@@ -312,7 +324,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     else: 
         df_inventory['유효기간_표시'] = "기록없음"
     
-    # 탭 구성 
+    # 탭 구성 (의료기 탭(t6) 추가됨)
     t1, t2, t3, t4, t5, t6 = st.tabs(["🏢 매출처별 출고 리스트", "⚠️ 주문시기 및 재고부족 알림", "🚨 유효기간 임박 경고", "📦 장기 미출고 재고", "📋 전체 현재 재고", "🏥 의료기기 월별 출고"])
     
     with t1: render_t1(df_orders)
@@ -322,4 +334,4 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     with t5: render_t5(df_inventory, df_orders)
     with t6: render_t6(df_orders)
 else:
-    st.error("데이터 파일을 찾을 수 없습니다.")
+    st.error("데이터 파일을 찾을 수 없습니다. 출고데이터.xls 및 재고데이터.xls 파일을 확인해 주세요.")
