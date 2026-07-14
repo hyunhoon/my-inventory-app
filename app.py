@@ -27,32 +27,38 @@ def save_logs(logs):
 
 def check_and_send(key, msg):
     logs = load_logs()
-    today = datetime.now().strftime("%Y-%m-%d")
-    if logs.get(key) == today: return False
+    
+    # 📌 [수정됨] 오늘 날짜 상관없이 '이미 로그에 키가 존재하면' 영구적으로 발송 안 함
+    if key in logs: 
+        return False
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     params = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
         res = requests.get(url, params=params).json()
         if res.get('ok'):
-            logs[key] = today
+            logs[key] = datetime.now().strftime("%Y-%m-%d") # 보낸 날짜 기록
             save_logs(logs)
             return True
     except: pass
     return False
 
 def run_automated_check():
+    # 1. 한국 시간 설정
     kst = pytz.timezone('Asia/Seoul')
     now_kst = datetime.now(kst)
     today = now_kst.strftime("%Y-%m-%d")
     
+    # 2. 실행 시간 체크 (오전 9시 30분)
     if not (now_kst.hour == 9 and now_kst.minute == 30):
         return
 
+    # 3. 당일 실행 여부 전체 체크
     logs = load_logs()
     if logs.get("LAST_RUN_DATE") == today:
         return
 
+    # 4. 주말/공휴일 체크
     kr_holidays = holidays.KR()
     if now_kst.weekday() >= 5 or today in kr_holidays: 
         return
@@ -74,6 +80,7 @@ def run_automated_check():
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
     
+    # --- [주문 알림 로직] ---
     df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
     df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
     df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
@@ -88,8 +95,11 @@ def run_automated_check():
             stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
             if stk < row['p_am']:
                 msg = f"⚠️ [주문 알림] {row['매출처']} - {row['제품명']}\n예상일: {expected.strftime('%Y-%m-%d')}\n재고: {stk:.0f} < 주문량: {row['p_am']:.0f}"
-                check_and_send(f"{today}_{row['매출처']}_{row['제품명']}_ORDER", msg)
+                # 📌 [수정됨] key에 'today'를 빼고 '매출처+제품+예상일'을 고유값으로 사용
+                order_key = f"{row['매출처']}_{row['제품명']}_{expected.strftime('%Y%m%d')}_ORDER"
+                check_and_send(order_key, msg)
 
+    # --- [유효기간 알림 로직] ---
     if '유효기간' in df_inventory.columns:
         df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
         df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
@@ -98,8 +108,12 @@ def run_automated_check():
         for _, row in s_exp.iterrows():
             rem_d = (row['유효기간_날짜'] - now_kst.replace(tzinfo=None)).days
             msg = f"🚨 [유효기간 임박] {row['제품명']}\n재고: {row['재고수량']:.0f}개\n남은 기간: {rem_d}일"
-            check_and_send(f"{today}_{row['제품명']}_EXP", msg)
+            # 📌 [수정됨] key에 'today'를 빼고 '제품+유효기간'을 고유값으로 사용
+            exp_key = f"{row['제품명']}_{row['유효기간_정리']}_EXP"
+            check_and_send(exp_key, msg)
 
+    # 📌 [수정됨] 당일 알림 전체 발송 완료 처리 (최신 로그 다시 불러오기)
+    logs = load_logs()
     logs["LAST_RUN_DATE"] = today
     save_logs(logs)
 
@@ -108,7 +122,11 @@ def scheduler_thread():
         run_automated_check()
         time.sleep(60)
 
-threading.Thread(target=scheduler_thread, daemon=True).start()
+# 📌 [수정됨] 백그라운드 요원(Thread)이 이미 있는지 확인하고 없을 때만 1명 생성
+thread_exists = any(t.name == "AlertScheduler" for t in threading.enumerate())
+if not thread_exists:
+    t = threading.Thread(target=scheduler_thread, daemon=True, name="AlertScheduler")
+    t.start()
 
 # --- [UI 메인 코드] ---
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
@@ -145,7 +163,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         df_inventory['유효기간_표시'] = "기록없음"
     
     # ==========================================
-    # 📌 사이드바 메뉴 생성 (버그 원천 차단)
+    # 📌 사이드바 메뉴 생성 
     # ==========================================
     st.sidebar.title("📌 시스템 메뉴")
     menu = st.sidebar.radio(
