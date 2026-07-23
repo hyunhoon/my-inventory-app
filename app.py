@@ -28,7 +28,6 @@ def save_logs(logs):
 def check_and_send(key, msg):
     logs = load_logs()
     
-    # 📌 [수정됨] 오늘 날짜 상관없이 '이미 로그에 키가 존재하면' 영구적으로 발송 안 함
     if key in logs: 
         return False
     
@@ -37,28 +36,24 @@ def check_and_send(key, msg):
     try:
         res = requests.get(url, params=params).json()
         if res.get('ok'):
-            logs[key] = datetime.now().strftime("%Y-%m-%d") # 보낸 날짜 기록
+            logs[key] = datetime.now().strftime("%Y-%m-%d") 
             save_logs(logs)
             return True
     except: pass
     return False
 
 def run_automated_check():
-    # 1. 한국 시간 설정
     kst = pytz.timezone('Asia/Seoul')
     now_kst = datetime.now(kst)
     today = now_kst.strftime("%Y-%m-%d")
     
-    # 2. 실행 시간 체크 (오전 9시 30분)
     if not (now_kst.hour == 9 and now_kst.minute == 30):
         return
 
-    # 3. 당일 실행 여부 전체 체크
     logs = load_logs()
     if logs.get("LAST_RUN_DATE") == today:
         return
 
-    # 4. 주말/공휴일 체크
     kr_holidays = holidays.KR()
     if now_kst.weekday() >= 5 or today in kr_holidays: 
         return
@@ -80,7 +75,6 @@ def run_automated_check():
     df_inventory['제품명'] = df_inventory['제품명'].fillna('').astype(str).str.strip()
     df_orders['출고일자'] = pd.to_datetime(df_orders['출고일자'], errors='coerce')
     
-    # --- [주문 알림 로직] ---
     df_o_srt = df_orders.sort_values(by=['매출처', '제품명', '출고일자'])
     df_o_srt['이전일'] = df_o_srt.groupby(['매출처', '제품명'])['출고일자'].shift(1)
     df_o_srt['주기'] = (df_o_srt['출고일자'] - df_o_srt['이전일']).dt.days
@@ -95,11 +89,9 @@ def run_automated_check():
             stk = df_inventory[df_inventory['제품명'] == row['제품명']]['재고수량'].sum()
             if stk < row['p_am']:
                 msg = f"⚠️ [주문 알림] {row['매출처']} - {row['제품명']}\n예상일: {expected.strftime('%Y-%m-%d')}\n재고: {stk:.0f} < 주문량: {row['p_am']:.0f}"
-                # 📌 [수정됨] key에 'today'를 빼고 '매출처+제품+예상일'을 고유값으로 사용
                 order_key = f"{row['매출처']}_{row['제품명']}_{expected.strftime('%Y%m%d')}_ORDER"
                 check_and_send(order_key, msg)
 
-    # --- [유효기간 알림 로직] ---
     if '유효기간' in df_inventory.columns:
         df_inventory['유효기간_정리'] = df_inventory['유효기간'].astype(str).str.strip().str.split('.').str[0]
         df_inventory['유효기간_날짜'] = pd.to_datetime(df_inventory['유효기간_정리'], format='%Y%m%d', errors='coerce')
@@ -108,11 +100,9 @@ def run_automated_check():
         for _, row in s_exp.iterrows():
             rem_d = (row['유효기간_날짜'] - now_kst.replace(tzinfo=None)).days
             msg = f"🚨 [유효기간 임박] {row['제품명']}\n재고: {row['재고수량']:.0f}개\n남은 기간: {rem_d}일"
-            # 📌 [수정됨] key에 'today'를 빼고 '제품+유효기간'을 고유값으로 사용
             exp_key = f"{row['제품명']}_{row['유효기간_정리']}_EXP"
             check_and_send(exp_key, msg)
 
-    # 📌 [수정됨] 당일 알림 전체 발송 완료 처리 (최신 로그 다시 불러오기)
     logs = load_logs()
     logs["LAST_RUN_DATE"] = today
     save_logs(logs)
@@ -122,7 +112,6 @@ def scheduler_thread():
         run_automated_check()
         time.sleep(60)
 
-# 📌 [수정됨] 백그라운드 요원(Thread)이 이미 있는지 확인하고 없을 때만 1명 생성
 thread_exists = any(t.name == "AlertScheduler" for t in threading.enumerate())
 if not thread_exists:
     t = threading.Thread(target=scheduler_thread, daemon=True, name="AlertScheduler")
@@ -130,6 +119,10 @@ if not thread_exists:
 
 # --- [UI 메인 코드] ---
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
+
+# (추가) 주문 내역 저장을 위한 세션 상태 초기화
+if "order_list" not in st.session_state:
+    st.session_state.order_list = pd.DataFrame(columns=["주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
 
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
@@ -163,12 +156,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         df_inventory['유효기간_표시'] = "기록없음"
     
     # ==========================================
-    # 📌 사이드바 메뉴 생성 
+    # 📌 사이드바 메뉴 생성
     # ==========================================
     st.sidebar.title("📌 시스템 메뉴")
     menu = st.sidebar.radio(
         "조회할 항목을 선택하세요:",
-        ["🏢 매출처별 출고 리스트", 
+        ["📝 신규 주문 등록",  # <--- 새롭게 추가된 첫 번째 메뉴
+         "🏢 매출처별 출고 리스트", 
          "⚠️ 주문 시기 및 재고 부족 위험", 
          "🚨 유효기간 임박 경고 (365일 미만)", 
          "📦 장기 미출고 재고 (90일 이상)", 
@@ -176,14 +170,100 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
          "🏥 의료기기 월별 출고 상세 내역"]
     )
     
-    # 화면 상단에 선택한 메뉴 이름 표시
     st.title(menu)
     st.markdown("---")
 
     # ==========================================
-    # 📌 선택된 메뉴에 해당하는 화면만 렌더링
+    # 📌 1. 신규 주문 등록 탭 (새로 추가됨)
     # ==========================================
-    if menu == "🏢 매출처별 출고 리스트":
+    if menu == "📝 신규 주문 등록":
+        # 데이터 목록 추출 (중복 제거 및 정렬)
+        existing_customers = sorted(list(set([str(c) for c in df_orders['매출처'].unique() if str(c).strip() not in ['nan', '']])))
+        all_products = set(df_orders['제품명'].unique()).union(set(df_inventory['제품명'].unique()))
+        existing_products = sorted(list(set([str(p) for p in all_products if str(p).strip() not in ['nan', '']])))
+
+        st.subheader("새로운 주문(수주) 데이터를 입력하세요.")
+        
+        # 1줄: 날짜 / 수주처 / 품목
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            order_date = st.date_input("📅 주문일", datetime.now())
+        
+        with col2:
+            cust_sel = st.selectbox("🏢 수주처 선택", ["선택하세요", "➕ 신규 직접 입력"] + existing_customers)
+            if cust_sel == "➕ 신규 직접 입력":
+                cust_input = st.text_input("새로운 수주처명을 입력하세요")
+            else:
+                cust_input = "" if cust_sel == "선택하세요" else cust_sel
+                
+        with col3:
+            prod_sel = st.selectbox("💊 품목 선택", ["선택하세요", "➕ 신규 직접 입력"] + existing_products)
+            if prod_sel == "➕ 신규 직접 입력":
+                prod_input = st.text_input("새로운 품목명을 입력하세요")
+            else:
+                prod_input = "" if prod_sel == "선택하세요" else prod_sel
+                
+        # 선택된 품목의 실시간 재고 계산
+        current_stock = 0
+        if prod_input:
+            current_stock = df_inventory[df_inventory['제품명'] == prod_input]['재고수량'].sum()
+            st.info(f"💡 현재 **'{prod_input}'**의 창고 총 재고량은 **{int(current_stock)}개** 입니다.")
+            
+        # 2줄: 수량 / 특이사항
+        col4, col5 = st.columns([1, 2])
+        with col4:
+            order_qty = st.number_input("📦 수량", min_value=1, step=1, value=1)
+        with col5:
+            remarks = st.text_input("📝 특이사항", "")
+            
+        # 주문 추가 버튼
+        if st.button("➕ 주문 목록에 추가", type="primary"):
+            if not cust_input or not prod_input:
+                st.error("⚠️ 수주처와 품목을 정확히 입력해 주세요.")
+            else:
+                # 부족량 자동 계산 로직
+                shortage = order_qty - current_stock
+                shortage = int(shortage) if shortage > 0 else 0
+                
+                # 이미지 형식에 맞춘 새 데이터 생성
+                new_row = pd.DataFrame({
+                    "주문일": [order_date.strftime("%m-%d")],
+                    "수주처": [cust_input],
+                    "품목": [prod_input],
+                    "수량": [int(order_qty)],
+                    "재고량": [int(current_stock)],
+                    "부족량": [shortage],
+                    "특이사항": [remarks]
+                })
+                # 세션에 데이터 누적
+                st.session_state.order_list = pd.concat([st.session_state.order_list, new_row], ignore_index=True)
+                st.success("✅ 주문 목록에 정상적으로 등록되었습니다!")
+
+        st.markdown("---")
+        st.markdown("### 📋 등록된 주문 내역 요약")
+        
+        if not st.session_state.order_list.empty:
+            # st.data_editor를 사용하여 사용자가 표에서 직접 행을 삭제하거나 글자를 수정할 수 있게 함
+            edited_df = st.data_editor(
+                st.session_state.order_list, 
+                num_rows="dynamic", # 표 안에서 행 추가/삭제 허용
+                use_container_width=True, 
+                hide_index=True
+            )
+            # 사용자가 표에서 삭제/수정한 내용 동기화
+            st.session_state.order_list = edited_df  
+            
+            if st.button("🗑️ 요약 내역 전체 초기화"):
+                st.session_state.order_list = pd.DataFrame(columns=["주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+                st.rerun()
+        else:
+            st.caption("위의 양식에서 주문을 추가하시면 이곳에 양식에 맞춰 데이터가 쌓입니다.")
+
+
+    # ==========================================
+    # 📌 2. 기존 탭 로직들 (수정 없음)
+    # ==========================================
+    elif menu == "🏢 매출처별 출고 리스트":
         u_cust = sorted([str(c) for c in df_orders['매출처'].unique() if str(c).strip() != 'nan' and str(c).strip() != ''])
         c_search = st.text_input("🔍 매출처 검색:", "", key="c_search_t1")
         f_cust = [c for c in u_cust if c_search.lower() in c.lower()] if c_search else u_cust
