@@ -117,15 +117,36 @@ if not thread_exists:
     t = threading.Thread(target=scheduler_thread, daemon=True, name="AlertScheduler")
     t.start()
 
+
+# --- [새로 추가됨: 주문 내역 영구 저장 기능] ---
+ORDERS_SAVE_FILE = "saved_orders.csv"
+
+def load_saved_orders():
+    # 파일이 있으면 불러오고, 없으면 빈 양식을 만듭니다.
+    if os.path.exists(ORDERS_SAVE_FILE):
+        try:
+            df = pd.read_csv(ORDERS_SAVE_FILE)
+            if "완료" in df.columns:
+                df["완료"] = df["완료"].astype(bool) # 체크박스를 위한 불리언 처리
+            return df
+        except:
+            pass
+    return pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+
+def save_current_orders(df):
+    # 데이터를 파일로 영구 저장합니다. (한글 깨짐 방지 utf-8-sig)
+    df.to_csv(ORDERS_SAVE_FILE, index=False, encoding='utf-8-sig')
+
+
 # --- [UI 메인 코드] ---
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 
-# (추가/수정) 주문 내역 저장을 위한 세션 상태 초기화 및 삭제 기능 반영
+# 저장된 주문 내역 불러오기 (새로고침해도 파일에서 가져옴)
 if "order_list" not in st.session_state:
-    st.session_state.order_list = pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
-# (기존 데이터 호환성 보장) 완료 열이 없으면 새로 추가
+    st.session_state.order_list = load_saved_orders()
 elif "완료" not in st.session_state.order_list.columns:
     st.session_state.order_list.insert(0, "완료", False)
+    save_current_orders(st.session_state.order_list)
 
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
@@ -223,7 +244,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 shortage = int(shortage) if shortage > 0 else 0
                 
                 new_row = pd.DataFrame({
-                    "완료": [False],  # 신규 추가 시 완료는 항상 False
+                    "완료": [False], 
                     "주문일": [order_date.strftime("%m-%d")],
                     "수주처": [cust_input],
                     "품목": [prod_input],
@@ -232,14 +253,15 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     "부족량": [shortage],
                     "특이사항": [remarks]
                 })
+                # 세션 데이터 업데이트 후 즉시 파일에 저장!
                 st.session_state.order_list = pd.concat([st.session_state.order_list, new_row], ignore_index=True)
+                save_current_orders(st.session_state.order_list)
                 st.success("✅ 주문 목록에 정상적으로 등록되었습니다!")
 
         st.markdown("---")
         st.markdown("### 📋 등록된 주문 내역 요약")
         
         if not st.session_state.order_list.empty:
-            # 상태 변경을 감지하는 Data Editor (체크박스 기능 강화)
             edited_df = st.data_editor(
                 st.session_state.order_list, 
                 column_config={
@@ -252,24 +274,25 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 use_container_width=True, 
                 hide_index=True
             )
-            # 사용자가 수정한 내용(체크 여부, 텍스트 수정) 동기화
-            st.session_state.order_list = edited_df  
             
-            # 삭제 대상 찾기
+            # 사용자가 내용을 수정하거나 체크박스를 눌렀다면 즉시 파일에 덮어쓰기!
+            if not edited_df.equals(st.session_state.order_list):
+                st.session_state.order_list = edited_df
+                save_current_orders(st.session_state.order_list)
+            
             completed_rows = edited_df[edited_df["완료"] == True]
             
-            # 버튼 영역 배치
             col_btn1, col_btn2 = st.columns([1.5, 8.5])
             with col_btn1:
-                # 체크된 항목이 1개 이상일 때만 삭제 버튼 활성화
                 if not completed_rows.empty:
                     if st.button("🗑️ 선택 항목 삭제", type="primary"):
-                        # 완료 처리되지 않은(False) 데이터만 남기기
                         st.session_state.order_list = edited_df[edited_df["완료"] == False].reset_index(drop=True)
+                        save_current_orders(st.session_state.order_list)
                         st.rerun()
             with col_btn2:
                 if st.button("🚨 요약 내역 전체 초기화"):
                     st.session_state.order_list = pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+                    save_current_orders(st.session_state.order_list)
                     st.rerun()
         else:
             st.caption("위의 양식에서 주문을 추가하시면 이곳에 양식에 맞춰 데이터가 쌓입니다.")
