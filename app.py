@@ -145,6 +145,10 @@ elif "완료" not in st.session_state.order_list.columns:
     st.session_state.order_list.insert(0, "완료", False)
     save_current_orders(st.session_state.order_list)
 
+# 입력창 초기화를 위한 리셋 카운터 세션 초기화
+if "reset_counter" not in st.session_state:
+    st.session_state.reset_counter = 0
+
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     current_date = datetime.now()
@@ -194,7 +198,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     st.markdown("---")
 
     # ==========================================
-    # 📌 1. 신규 주문 등록 탭 (다중 품목 지원)
+    # 📌 1. 신규 주문 등록 탭 (입력창 자동 초기화 기능 적용)
     # ==========================================
     if menu == "📝 신규 주문 등록":
         existing_customers = sorted(list(set([str(c) for c in df_orders['매출처'].unique() if str(c).strip() not in ['nan', '']])))
@@ -203,26 +207,24 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         st.subheader("새로운 주문(수주) 데이터를 입력하세요.")
         
+        rc = st.session_state.reset_counter  # 입력창 리셋을 위한 키 서픽스
+
         col1, col2 = st.columns(2)
         with col1:
-            order_date = st.date_input("📅 주문일", datetime.now())
+            order_date = st.date_input("📅 주문일", datetime.now(), key=f"order_date_{rc}")
         with col2:
-            cust_sel = st.selectbox("🏢 수주처 선택", ["선택하세요", "➕ 신규 직접 입력"] + existing_customers)
+            cust_sel = st.selectbox("🏢 수주처 선택", ["선택하세요", "➕ 신규 직접 입력"] + existing_customers, key=f"cust_sel_{rc}")
             if cust_sel == "➕ 신규 직접 입력":
-                cust_input = st.text_input("새로운 수주처명을 입력하세요")
+                cust_input = st.text_input("새로운 수주처명을 입력하세요", key=f"cust_input_{rc}")
             else:
                 cust_input = "" if cust_sel == "선택하세요" else cust_sel
 
         st.markdown("---")
         st.markdown("### 💊 복수 품목 주문 입력")
         
-        # 📌 다중 품목 선택 기능 적용 (multiselect)
-        prod_sels = st.multiselect("품목을 여러 개 선택하세요 (신규 품목은 아래에서 직접 입력 가능)", existing_products)
-        
-        # 목록에 없는 신규 품목을 추가로 직접 입력할 수 있는 필드 제공
-        new_prod_input = st.text_input("➕ [선택사항] 위 목록에 없는 신규 품목이 있다면 쉼표(,)로 구분하여 입력하세요 (예: 품목A, 품목B)")
-        
-        # 선택된 품목 리스트 취합
+        prod_sels = st.multiselect("품목을 여러 개 선택하세요 (신규 품목은 아래에서 직접 입력 가능)", existing_products, key=f"prod_sels_{rc}")
+        new_prod_input = st.text_input("➕ [선택사항] 위 목록에 없는 신규 품목이 있다면 쉼표(,)로 구분하여 입력하세요 (예: 품목A, 품목B)", key=f"new_prod_input_{rc}")
+
         selected_prods = list(prod_sels)
         if new_prod_input:
             extra_prods = [p.strip() for p in new_prod_input.split(',') if p.strip()]
@@ -230,7 +232,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 if p not in selected_prods:
                     selected_prods.append(p)
 
-        # 선택된 품목별로 수량과 특이사항을 개별 입력받는 구역
         order_details = []
         if selected_prods:
             st.markdown("#### 📦 선택한 품목별 수량 및 특이사항 입력")
@@ -240,9 +241,9 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 with st.expander(f"🔹 품목: {prod} (현재 창고 재고: {int(current_stock)}개)", expanded=True):
                     d_col1, d_col2 = st.columns([1, 2])
                     with d_col1:
-                        qty = st.number_input(f"주문 수량 ({prod})", min_value=1, step=1, value=1, key=f"qty_{prod}")
+                        qty = st.number_input(f"주문 수량 ({prod})", min_value=1, step=1, value=1, key=f"qty_{prod}_{rc}")
                     with d_col2:
-                        remark = st.text_input(f"특이사항 ({prod})", "", key=f"rem_{prod}")
+                        remark = st.text_input(f"특이사항 ({prod})", "", key=f"rem_{prod}_{rc}")
                     
                     order_details.append({
                         "품목": prod,
@@ -277,8 +278,11 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_new = pd.DataFrame(new_rows_list)
                 st.session_state.order_list = pd.concat([st.session_state.order_list, df_new], ignore_index=True)
                 save_current_orders(st.session_state.order_list)
+                
+                # 📌 등록 완료 후 입력창들을 초기화하기 위해 카운터 증가 후 새로고침
+                st.session_state.reset_counter += 1
                 st.success("✅ 모든 품목이 주문 목록에 정상적으로 일괄 등록되었습니다!")
-                # 리렌더링을 유도하여 입력창 초기화 효과
+                time.sleep(0.5)
                 st.rerun()
 
         st.markdown("---")
