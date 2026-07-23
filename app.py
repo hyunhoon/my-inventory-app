@@ -118,30 +118,27 @@ if not thread_exists:
     t.start()
 
 
-# --- [새로 추가됨: 주문 내역 영구 저장 기능] ---
+# --- [주문 내역 영구 저장 기능] ---
 ORDERS_SAVE_FILE = "saved_orders.csv"
 
 def load_saved_orders():
-    # 파일이 있으면 불러오고, 없으면 빈 양식을 만듭니다.
     if os.path.exists(ORDERS_SAVE_FILE):
         try:
             df = pd.read_csv(ORDERS_SAVE_FILE)
             if "완료" in df.columns:
-                df["완료"] = df["완료"].astype(bool) # 체크박스를 위한 불리언 처리
+                df["완료"] = df["완료"].astype(bool)
             return df
         except:
             pass
     return pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
 
 def save_current_orders(df):
-    # 데이터를 파일로 영구 저장합니다. (한글 깨짐 방지 utf-8-sig)
     df.to_csv(ORDERS_SAVE_FILE, index=False, encoding='utf-8-sig')
 
 
 # --- [UI 메인 코드] ---
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 
-# 저장된 주문 내역 불러오기 (새로고침해도 파일에서 가져옴)
 if "order_list" not in st.session_state:
     st.session_state.order_list = load_saved_orders()
 elif "완료" not in st.session_state.order_list.columns:
@@ -154,7 +151,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     df_orders = pd.read_excel(ORDER_FILE)
     df_inventory = pd.read_excel(INVENTORY_FILE)
 
-    # 1. 데이터 기본 정제
     for df in [df_orders, df_inventory]:
         if '운송비' in df.columns:
             df.drop(columns=['운송비'], inplace=True)
@@ -198,7 +194,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     st.markdown("---")
 
     # ==========================================
-    # 📌 1. 신규 주문 등록 탭 
+    # 📌 1. 신규 주문 등록 탭 (다중 품목 지원)
     # ==========================================
     if menu == "📝 신규 주문 등록":
         existing_customers = sorted(list(set([str(c) for c in df_orders['매출처'].unique() if str(c).strip() not in ['nan', '']])))
@@ -207,56 +203,83 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         st.subheader("새로운 주문(수주) 데이터를 입력하세요.")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             order_date = st.date_input("📅 주문일", datetime.now())
-        
         with col2:
             cust_sel = st.selectbox("🏢 수주처 선택", ["선택하세요", "➕ 신규 직접 입력"] + existing_customers)
             if cust_sel == "➕ 신규 직접 입력":
                 cust_input = st.text_input("새로운 수주처명을 입력하세요")
             else:
                 cust_input = "" if cust_sel == "선택하세요" else cust_sel
+
+        st.markdown("---")
+        st.markdown("### 💊 복수 품목 주문 입력")
+        
+        # 📌 다중 품목 선택 기능 적용 (multiselect)
+        prod_sels = st.multiselect("품목을 여러 개 선택하세요 (신규 품목은 아래에서 직접 입력 가능)", existing_products)
+        
+        # 목록에 없는 신규 품목을 추가로 직접 입력할 수 있는 필드 제공
+        new_prod_input = st.text_input("➕ [선택사항] 위 목록에 없는 신규 품목이 있다면 쉼표(,)로 구분하여 입력하세요 (예: 품목A, 품목B)")
+        
+        # 선택된 품목 리스트 취합
+        selected_prods = list(prod_sels)
+        if new_prod_input:
+            extra_prods = [p.strip() for p in new_prod_input.split(',') if p.strip()]
+            for p in extra_prods:
+                if p not in selected_prods:
+                    selected_prods.append(p)
+
+        # 선택된 품목별로 수량과 특이사항을 개별 입력받는 구역
+        order_details = []
+        if selected_prods:
+            st.markdown("#### 📦 선택한 품목별 수량 및 특이사항 입력")
+            for prod in selected_prods:
+                current_stock = df_inventory[df_inventory['제품명'] == prod]['재고수량'].sum()
                 
-        with col3:
-            prod_sel = st.selectbox("💊 품목 선택", ["선택하세요", "➕ 신규 직접 입력"] + existing_products)
-            if prod_sel == "➕ 신규 직접 입력":
-                prod_input = st.text_input("새로운 품목명을 입력하세요")
+                with st.expander(f"🔹 품목: {prod} (현재 창고 재고: {int(current_stock)}개)", expanded=True):
+                    d_col1, d_col2 = st.columns([1, 2])
+                    with d_col1:
+                        qty = st.number_input(f"주문 수량 ({prod})", min_value=1, step=1, value=1, key=f"qty_{prod}")
+                    with d_col2:
+                        remark = st.text_input(f"특이사항 ({prod})", "", key=f"rem_{prod}")
+                    
+                    order_details.append({
+                        "품목": prod,
+                        "수량": qty,
+                        "재고량": current_stock,
+                        "특이사항": remark
+                    })
+
+        st.markdown("")
+        if st.button("➕ 선택한 모든 품목 주문 목록에 일괄 추가", type="primary"):
+            if not cust_input:
+                st.error("⚠️ 수주처를 선택 또는 입력해 주세요.")
+            elif not order_details:
+                st.error("⚠️ 주문할 품목을 하나 이상 선택하거나 입력해 주세요.")
             else:
-                prod_input = "" if prod_sel == "선택하세요" else prod_sel
+                new_rows_list = []
+                for item in order_details:
+                    shortage = item["수량"] - item["재고량"]
+                    shortage = int(shortage) if shortage > 0 else 0
+                    
+                    new_rows_list.append({
+                        "완료": False,
+                        "주문일": order_date.strftime("%m-%d"),
+                        "수주처": cust_input,
+                        "품목": item["품목"],
+                        "수량": int(item["수량"]),
+                        "재고량": int(item["재고량"]),
+                        "부족량": shortage,
+                        "특이사항": item["특이사항"]
+                    })
                 
-        current_stock = 0
-        if prod_input:
-            current_stock = df_inventory[df_inventory['제품명'] == prod_input]['재고수량'].sum()
-            st.info(f"💡 현재 **'{prod_input}'**의 창고 총 재고량은 **{int(current_stock)}개** 입니다.")
-            
-        col4, col5 = st.columns([1, 2])
-        with col4:
-            order_qty = st.number_input("📦 수량", min_value=1, step=1, value=1)
-        with col5:
-            remarks = st.text_input("📝 특이사항", "")
-            
-        if st.button("➕ 주문 목록에 추가", type="primary"):
-            if not cust_input or not prod_input:
-                st.error("⚠️ 수주처와 품목을 정확히 입력해 주세요.")
-            else:
-                shortage = order_qty - current_stock
-                shortage = int(shortage) if shortage > 0 else 0
-                
-                new_row = pd.DataFrame({
-                    "완료": [False], 
-                    "주문일": [order_date.strftime("%m-%d")],
-                    "수주처": [cust_input],
-                    "품목": [prod_input],
-                    "수량": [int(order_qty)],
-                    "재고량": [int(current_stock)],
-                    "부족량": [shortage],
-                    "특이사항": [remarks]
-                })
-                # 세션 데이터 업데이트 후 즉시 파일에 저장!
-                st.session_state.order_list = pd.concat([st.session_state.order_list, new_row], ignore_index=True)
+                df_new = pd.DataFrame(new_rows_list)
+                st.session_state.order_list = pd.concat([st.session_state.order_list, df_new], ignore_index=True)
                 save_current_orders(st.session_state.order_list)
-                st.success("✅ 주문 목록에 정상적으로 등록되었습니다!")
+                st.success("✅ 모든 품목이 주문 목록에 정상적으로 일괄 등록되었습니다!")
+                # 리렌더링을 유도하여 입력창 초기화 효과
+                st.rerun()
 
         st.markdown("---")
         st.markdown("### 📋 등록된 주문 내역 요약")
@@ -275,7 +298,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 hide_index=True
             )
             
-            # 사용자가 내용을 수정하거나 체크박스를 눌렀다면 즉시 파일에 덮어쓰기!
             if not edited_df.equals(st.session_state.order_list):
                 st.session_state.order_list = edited_df
                 save_current_orders(st.session_state.order_list)
@@ -428,12 +450,12 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_med['출고일자_표시'] = df_med['출고일자'].dt.strftime('%Y-%m-%d')
                 df_med['분류월'] = df_med['출고일자'].dt.strftime('%Y년 %m월')
                 
-                unique_months = sorted([m for m in df_med['분류월'].unique() if str(m) != 'nan'], reverse=True)
+                window_months = sorted([m for m in df_med['분류월'].unique() if str(m) != 'nan'], reverse=True)
                 
-                if not unique_months:
+                if not window_months:
                     st.info("출고 날짜 데이터가 없습니다.")
                 else:
-                    selected_month = st.selectbox("📅 조회할 년-월을 선택하세요:", unique_months, key="medical_month_select")
+                    selected_month = st.selectbox("📅 조회할 년-월을 선택하세요:", window_months, key="medical_month_select")
                     
                     if selected_month:
                         st.markdown("---")
