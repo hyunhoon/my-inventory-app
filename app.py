@@ -120,9 +120,12 @@ if not thread_exists:
 # --- [UI 메인 코드] ---
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 
-# (추가) 주문 내역 저장을 위한 세션 상태 초기화
+# (추가/수정) 주문 내역 저장을 위한 세션 상태 초기화 및 삭제 기능 반영
 if "order_list" not in st.session_state:
-    st.session_state.order_list = pd.DataFrame(columns=["주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+    st.session_state.order_list = pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+# (기존 데이터 호환성 보장) 완료 열이 없으면 새로 추가
+elif "완료" not in st.session_state.order_list.columns:
+    st.session_state.order_list.insert(0, "완료", False)
 
 ORDER_FILE, INVENTORY_FILE = "출고데이터.xls", "재고데이터.xls"
 if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
@@ -161,7 +164,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     st.sidebar.title("📌 시스템 메뉴")
     menu = st.sidebar.radio(
         "조회할 항목을 선택하세요:",
-        ["📝 신규 주문 등록",  # <--- 새롭게 추가된 첫 번째 메뉴
+        ["📝 신규 주문 등록", 
          "🏢 매출처별 출고 리스트", 
          "⚠️ 주문 시기 및 재고 부족 위험", 
          "🚨 유효기간 임박 경고 (365일 미만)", 
@@ -174,17 +177,15 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     st.markdown("---")
 
     # ==========================================
-    # 📌 1. 신규 주문 등록 탭 (새로 추가됨)
+    # 📌 1. 신규 주문 등록 탭 
     # ==========================================
     if menu == "📝 신규 주문 등록":
-        # 데이터 목록 추출 (중복 제거 및 정렬)
         existing_customers = sorted(list(set([str(c) for c in df_orders['매출처'].unique() if str(c).strip() not in ['nan', '']])))
         all_products = set(df_orders['제품명'].unique()).union(set(df_inventory['제품명'].unique()))
         existing_products = sorted(list(set([str(p) for p in all_products if str(p).strip() not in ['nan', '']])))
 
         st.subheader("새로운 주문(수주) 데이터를 입력하세요.")
         
-        # 1줄: 날짜 / 수주처 / 품목
         col1, col2, col3 = st.columns(3)
         with col1:
             order_date = st.date_input("📅 주문일", datetime.now())
@@ -203,30 +204,26 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             else:
                 prod_input = "" if prod_sel == "선택하세요" else prod_sel
                 
-        # 선택된 품목의 실시간 재고 계산
         current_stock = 0
         if prod_input:
             current_stock = df_inventory[df_inventory['제품명'] == prod_input]['재고수량'].sum()
             st.info(f"💡 현재 **'{prod_input}'**의 창고 총 재고량은 **{int(current_stock)}개** 입니다.")
             
-        # 2줄: 수량 / 특이사항
         col4, col5 = st.columns([1, 2])
         with col4:
             order_qty = st.number_input("📦 수량", min_value=1, step=1, value=1)
         with col5:
             remarks = st.text_input("📝 특이사항", "")
             
-        # 주문 추가 버튼
         if st.button("➕ 주문 목록에 추가", type="primary"):
             if not cust_input or not prod_input:
                 st.error("⚠️ 수주처와 품목을 정확히 입력해 주세요.")
             else:
-                # 부족량 자동 계산 로직
                 shortage = order_qty - current_stock
                 shortage = int(shortage) if shortage > 0 else 0
                 
-                # 이미지 형식에 맞춘 새 데이터 생성
                 new_row = pd.DataFrame({
+                    "완료": [False],  # 신규 추가 시 완료는 항상 False
                     "주문일": [order_date.strftime("%m-%d")],
                     "수주처": [cust_input],
                     "품목": [prod_input],
@@ -235,7 +232,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     "부족량": [shortage],
                     "특이사항": [remarks]
                 })
-                # 세션에 데이터 누적
                 st.session_state.order_list = pd.concat([st.session_state.order_list, new_row], ignore_index=True)
                 st.success("✅ 주문 목록에 정상적으로 등록되었습니다!")
 
@@ -243,25 +239,44 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         st.markdown("### 📋 등록된 주문 내역 요약")
         
         if not st.session_state.order_list.empty:
-            # st.data_editor를 사용하여 사용자가 표에서 직접 행을 삭제하거나 글자를 수정할 수 있게 함
+            # 상태 변경을 감지하는 Data Editor (체크박스 기능 강화)
             edited_df = st.data_editor(
                 st.session_state.order_list, 
-                num_rows="dynamic", # 표 안에서 행 추가/삭제 허용
+                column_config={
+                    "완료": st.column_config.CheckboxColumn(
+                        "✅ 완료",
+                        help="처리가 완료된 주문을 체크하세요",
+                        default=False
+                    )
+                },
                 use_container_width=True, 
                 hide_index=True
             )
-            # 사용자가 표에서 삭제/수정한 내용 동기화
+            # 사용자가 수정한 내용(체크 여부, 텍스트 수정) 동기화
             st.session_state.order_list = edited_df  
             
-            if st.button("🗑️ 요약 내역 전체 초기화"):
-                st.session_state.order_list = pd.DataFrame(columns=["주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
-                st.rerun()
+            # 삭제 대상 찾기
+            completed_rows = edited_df[edited_df["완료"] == True]
+            
+            # 버튼 영역 배치
+            col_btn1, col_btn2 = st.columns([1.5, 8.5])
+            with col_btn1:
+                # 체크된 항목이 1개 이상일 때만 삭제 버튼 활성화
+                if not completed_rows.empty:
+                    if st.button("🗑️ 선택 항목 삭제", type="primary"):
+                        # 완료 처리되지 않은(False) 데이터만 남기기
+                        st.session_state.order_list = edited_df[edited_df["완료"] == False].reset_index(drop=True)
+                        st.rerun()
+            with col_btn2:
+                if st.button("🚨 요약 내역 전체 초기화"):
+                    st.session_state.order_list = pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+                    st.rerun()
         else:
             st.caption("위의 양식에서 주문을 추가하시면 이곳에 양식에 맞춰 데이터가 쌓입니다.")
 
 
     # ==========================================
-    # 📌 2. 기존 탭 로직들 (수정 없음)
+    # 📌 2. 기존 탭 로직들
     # ==========================================
     elif menu == "🏢 매출처별 출고 리스트":
         u_cust = sorted([str(c) for c in df_orders['매출처'].unique() if str(c).strip() != 'nan' and str(c).strip() != ''])
