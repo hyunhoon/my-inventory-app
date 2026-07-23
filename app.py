@@ -145,7 +145,6 @@ elif "완료" not in st.session_state.order_list.columns:
     st.session_state.order_list.insert(0, "완료", False)
     save_current_orders(st.session_state.order_list)
 
-# 입력창 초기화를 위한 리셋 카운터 세션 초기화
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
@@ -198,7 +197,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     st.markdown("---")
 
     # ==========================================
-    # 📌 1. 신규 주문 등록 탭 (입력창 자동 초기화 기능 적용)
+    # 📌 1. 신규 주문 등록 탭 
     # ==========================================
     if menu == "📝 신규 주문 등록":
         existing_customers = sorted(list(set([str(c) for c in df_orders['매출처'].unique() if str(c).strip() not in ['nan', '']])))
@@ -207,7 +206,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         st.subheader("새로운 주문(수주) 데이터를 입력하세요.")
         
-        rc = st.session_state.reset_counter  # 입력창 리셋을 위한 키 서픽스
+        rc = st.session_state.reset_counter
 
         col1, col2 = st.columns(2)
         with col1:
@@ -279,7 +278,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 st.session_state.order_list = pd.concat([st.session_state.order_list, df_new], ignore_index=True)
                 save_current_orders(st.session_state.order_list)
                 
-                # 📌 등록 완료 후 입력창들을 초기화하기 위해 카운터 증가 후 새로고침
                 st.session_state.reset_counter += 1
                 st.success("✅ 모든 품목이 주문 목록에 정상적으로 일괄 등록되었습니다!")
                 time.sleep(0.5)
@@ -289,8 +287,16 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         st.markdown("### 📋 등록된 주문 내역 요약")
         
         if not st.session_state.order_list.empty:
+            # 📌 [수정됨] 같은 수주처끼리 묶이도록 '수주처별 최초 주문일'을 기준으로 자동 정렬
+            df_display = st.session_state.order_list.copy()
+            if "수주처" in df_display.columns and "주문일" in df_display.columns and not df_display.empty:
+                min_dates = df_display.groupby("수주처")["주문일"].min().reset_index()
+                min_dates.columns = ["수주처", "최초주문일"]
+                df_display = pd.merge(df_display, min_dates, on="수주처", how="left")
+                df_display = df_display.sort_values(by=["최초주문일", "수주처", "주문일"]).drop(columns=["최초주문일"]).reset_index(drop=True)
+
             edited_df = st.data_editor(
-                st.session_state.order_list, 
+                df_display, 
                 column_config={
                     "완료": st.column_config.CheckboxColumn(
                         "✅ 완료",
@@ -302,7 +308,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 hide_index=True
             )
             
-            if not edited_df.equals(st.session_state.order_list):
+            if not edited_df.equals(df_display):
                 st.session_state.order_list = edited_df
                 save_current_orders(st.session_state.order_list)
             
