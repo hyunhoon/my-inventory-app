@@ -11,22 +11,15 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- [구글 시트 연동 설정 - 키 자동 보정 버전] ---
+# --- [구글 시트 연동 설정 - Streamlit Secrets JSON 통째로 읽기 방식 (오류 원천 차단)] ---
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    secret_dict = dict(st.secrets["gcp_service_account"])
-    
-    # private_key 내부의 줄바꿈 문자(\n)가 깨져 있거나 이스케이프된 경우를 완벽하게 자동 보정
-    if "private_key" in secret_dict:
-        pk = str(secret_dict["private_key"])
-        if "\\n" in pk:
-            pk = pk.replace("\\n", "\n")
-        secret_dict["private_key"] = pk
-
-    creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
+    # Streamlit Secrets에 등록된 전체 JSON 문자열을 로드하여 패딩 오류를 원천 차단합니다.
+    service_account_info = json.loads(st.secrets["gcp_json"])
+    creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
     client = gspread.authorize(creds)
     return client
 
