@@ -11,13 +11,13 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- [구글 시트 연동 설정] ---
+# --- [구글 시트 연동 설정 - 수정된 버전] ---
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # 스트림릿 Secrets에서 인증 정보 가져오기
+    # Secrets에 있는 전체 내용을 딕셔너리 형태로 그대로 가져옴
     secret_dict = dict(st.secrets["gcp_service_account"])
     creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
     client = gspread.authorize(creds)
@@ -26,17 +26,14 @@ def get_gspread_client():
 def load_saved_orders():
     try:
         client = get_gspread_client()
-        # 아까 만든 구글 스프레드시트 이름
         sheet = client.open("의약품_주문데이터").worksheet("주문내역")
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
-        # 데이터가 비어있을 경우 기본 프레임 반환
         if df.empty:
             return pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
             
         if "완료" in df.columns: 
-            # 엑셀/시트의 TRUE/FALSE 문자열을 불리언으로 변환
             df["완료"] = df["완료"].astype(str).str.lower() == 'true'
         return df
     except Exception as e:
@@ -47,11 +44,8 @@ def save_current_orders(df):
     try:
         client = get_gspread_client()
         sheet = client.open("의약품_주문데이터").worksheet("주문내역")
-        
-        # 시트 초기화 후 데이터 밀어넣기
         sheet.clear()
         
-        # 데이터프레임을 리스트 형태로 변환 (헤더 포함)
         df_to_save = df.copy()
         if "완료" in df_to_save.columns:
             df_to_save["완료"] = df_to_save["완료"].astype(str)
@@ -322,7 +316,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     st.rerun()
         else: st.caption("위의 양식에서 주문을 추가하시면 구글 시트에 안전하게 쌓입니다.")
 
-    # 기타 탭 로직들 유지
     elif menu == "🏢 매출처별 출고 리스트":
         u_cust = sorted([str(c) for c in df_orders['매출처'].unique() if str(c).strip() != 'nan' and str(c).strip() != ''])
         c_search = st.text_input("🔍 매출처 검색:", "", key="c_search_t1")
