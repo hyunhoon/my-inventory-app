@@ -6,3 +6,5 @@ holidays
 pytz
 xlrd
 openpyxl
+gspread
+google-auth
