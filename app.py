@@ -11,13 +11,12 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- [구글 시트 연동 설정 - Streamlit Secrets JSON 통째로 읽기 방식 (오류 원천 차단)] ---
+# --- [구글 시트 연동 설정 - Streamlit Secrets JSON 통째로 읽기 방식] ---
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # Streamlit Secrets에 등록된 전체 JSON 문자열을 로드하여 패딩 오류를 원천 차단합니다.
     service_account_info = json.loads(st.secrets["gcp_json"])
     creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
     client = gspread.authorize(creds)
@@ -161,7 +160,7 @@ if not thread_exists:
 # --- [UI 메인 코드] ---
 st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스템", layout="wide")
 
-st.success("✨ **[구글 시트 연동 완료]** 데이터가 클라우드 구글 시트에 영구 보존됩니다. 더 이상 데이터가 초기화되지 않습니다!")
+st.success("✨ **[구글 시트 연동 완료]** 데이터가 클라우드 구글 시트에 영구 보존됩니다.")
 
 if "order_list" not in st.session_state:
     st.session_state.order_list = load_saved_orders()
@@ -402,10 +401,28 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     if row['기록없음']: st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 출고 기록 없음")
                     else: st.info(f"**{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {yuhyo} • 최종일: {row['최종일'].strftime('%Y-%m-%d')} (**{int(row['경과일'])}일 경과**)")
 
+    # 6. 창고 전체 현재 재고 현황 수정 (재고량 0이어도 출고 이력 조회 가능하도록 병합)
     elif menu == "📋 창고 전체 현재 재고 현황":
         p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
-        df_f = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
-        if p_search: df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
+        
+        # 재고데이터와 출고데이터의 제품명을 모두 합쳐서 목록 구성
+        all_prods = sorted(list(set(df_inventory['제품명'].unique()) | set(df_orders['제품명'].unique())))
+        all_prods = [p for p in all_prods if str(p).strip() != '']
+        
+        df_all = pd.DataFrame({'제품명': all_prods})
+        
+        # 재고 정보 가져오기 (중복 제거)
+        df_inv_info = df_inventory[['제품명', '재고수량', '유효기간_표시']].drop_duplicates(subset=['제품명'])
+        
+        # 전체 제품 리스트에 재고 데이터 합치기
+        df_f = pd.merge(df_all, df_inv_info, on='제품명', how='left')
+        
+        # 재고 파일에 없는 제품은 수량 0, 유효기간은 기록없음 처리
+        df_f['재고수량'] = df_f['재고수량'].fillna(0)
+        df_f['유효기간_표시'] = df_f['유효기간_표시'].fillna('기록없음')
+        
+        if p_search: 
+            df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
             
         df_f.insert(0, "선택", False)
         df_f['선택'] = df_f['제품명'] == st.session_state.get('selected_product')
@@ -424,6 +441,8 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_h = df_p_ord[['매출처', '출고일자', '수량']].copy()
                 df_h['출고일자'] = df_h['출고일자'].dt.strftime('%Y-%m-%d')
                 st.dataframe(df_h.sort_values(by='출고일자', ascending=False), use_container_width=True, hide_index=True)
+            else:
+                st.info("출고 이력이 존재하지 않습니다.")
 
     elif menu == "🏥 의료기기 월별 출고 상세 내역":
         if '제품그룹' not in df_orders.columns:
