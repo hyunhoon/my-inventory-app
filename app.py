@@ -282,32 +282,54 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         st.markdown("### 📋 등록된 주문 내역 요약")
         
         if not st.session_state.order_list.empty:
-            # 실시간 재고 반영
+            # 기존 데이터를 안전하게 수치화 후 실시간 재고 반영
+            st.session_state.order_list['수량'] = pd.to_numeric(st.session_state.order_list['수량'], errors='coerce').fillna(0).astype(int)
             stock_map = df_inventory.groupby('제품명')['재고수량'].sum().to_dict()
             st.session_state.order_list['재고량'] = st.session_state.order_list['품목'].map(stock_map).fillna(0).astype(int)
             
+            # 부족량 갱신 계산
             shortage_calc = st.session_state.order_list['수량'] - st.session_state.order_list['재고량']
             st.session_state.order_list['부족량'] = shortage_calc.apply(lambda x: int(x) if x > 0 else 0)
 
             df_display = st.session_state.order_list.copy()
+            
+            # 최초주문일 기준 정렬
             if "수주처" in df_display.columns and "주문일" in df_display.columns and not df_display.empty:
                 min_dates = df_display.groupby("수주처")["주문일"].min().reset_index()
                 min_dates.columns = ["수주처", "최초주문일"]
                 df_display = pd.merge(df_display, min_dates, on="수주처", how="left")
                 df_display = df_display.sort_values(by=["최초주문일", "수주처", "주문일"]).drop(columns=["최초주문일"]).reset_index(drop=True)
 
-            # --- [재고 부족량 붉은색 강조 스타일 함수 적용] ---
+            # --- [이중 안전장치 1: 재고 부족 시각화 텍스트 강제 적용] ---
+            def format_shortage(x):
+                try:
+                    val = int(float(x))
+                    return f"🚨 {val} 부족" if val > 0 else "0"
+                except:
+                    if isinstance(x, str) and '🚨' in x: return x
+                    return "0"
+            
+            df_display['부족량'] = df_display['부족량'].apply(format_shortage)
+
+            # --- [이중 안전장치 2: 재고 부족량 붉은색 강조 스타일 함수 적용] ---
             def highlight_shortage(row):
-                if pd.to_numeric(row['부족량'], errors='coerce') > 0:
+                val = str(row['부족량'])
+                if '🚨' in val:
                     return ['background-color: #ffe6e6; color: #cc0000; font-weight: bold'] * len(row)
                 return [''] * len(row)
 
             styled_df = df_display.style.apply(highlight_shortage, axis=1)
 
+            # --- st.data_editor 스타일 풀림 방지를 위해 편집 비활성화(disabled) 명시 ---
             edited_df = st.data_editor(
-                styled_df, # 스타일이 적용된 데이터프레임 전달
-                column_config={"완료": st.column_config.CheckboxColumn("✅ 완료", default=False)},
-                use_container_width=True, hide_index=True
+                styled_df, 
+                column_config={
+                    "완료": st.column_config.CheckboxColumn("✅ 완료", default=False),
+                    "부족량": st.column_config.TextColumn("부족량")
+                },
+                disabled=["주문일", "수주처", "품목", "수량", "재고량", "부족량"], # 편집 못하게 묶어야 스타일 유지됨
+                use_container_width=True, 
+                hide_index=True
             )
             
             if not edited_df.equals(df_display):
