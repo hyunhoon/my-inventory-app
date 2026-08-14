@@ -30,14 +30,14 @@ def load_saved_orders():
         df = pd.DataFrame(data)
         
         if df.empty:
-            return pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+            return pd.DataFrame(columns=["완료", "주문일", "수주처", "재고량", "부족량", "특이사항"])
             
         if "완료" in df.columns: 
             df["완료"] = df["완료"].astype(str).str.lower() == 'true'
         return df
     except Exception as e:
         st.error(f"구글 시트 연동 오류: {e}")
-        return pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+        return pd.DataFrame(columns=["완료", "주문일", "수주처", "재고량", "부족량", "특이사항"])
 
 def save_current_orders(df):
     try:
@@ -265,8 +265,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     shortage = int(shortage) if shortage > 0 else 0
                     new_rows_list.append({
                         "완료": False, "주문일": order_date.strftime("%m-%d"), "수주처": cust_input,
-                        "품목": item["품목"], "수량": int(item["수량"]), "재고량": int(item["재고량"]),
-                        "부족량": shortage, "특이사항": item["특이사항"]
+                        "재고량": int(item["재고량"]), "부족량": shortage, "특이사항": item["특이사항"]
                     })
                 
                 df_new = pd.DataFrame(new_rows_list)
