@@ -11,7 +11,7 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- [구글 시트 연동 설정 - Streamlit Secrets JSON 통째로 읽기 방식] ---
+# --- [구글 시트 연동 설정] ---
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -282,7 +282,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         st.markdown("### 📋 등록된 주문 내역 요약")
         
         if not st.session_state.order_list.empty:
-            # [실시간 재고 반영 로직] 최신 재고 파일 정보를 기반으로 재고량 및 부족량 실시간 재계산
+            # 실시간 재고 반영
             stock_map = df_inventory.groupby('제품명')['재고수량'].sum().to_dict()
             st.session_state.order_list['재고량'] = st.session_state.order_list['품목'].map(stock_map).fillna(0).astype(int)
             
@@ -296,8 +296,16 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_display = pd.merge(df_display, min_dates, on="수주처", how="left")
                 df_display = df_display.sort_values(by=["최초주문일", "수주처", "주문일"]).drop(columns=["최초주문일"]).reset_index(drop=True)
 
+            # --- [재고 부족량 붉은색 강조 스타일 함수 적용] ---
+            def highlight_shortage(row):
+                if pd.to_numeric(row['부족량'], errors='coerce') > 0:
+                    return ['background-color: #ffe6e6; color: #cc0000; font-weight: bold'] * len(row)
+                return [''] * len(row)
+
+            styled_df = df_display.style.apply(highlight_shortage, axis=1)
+
             edited_df = st.data_editor(
-                df_display, 
+                styled_df, # 스타일이 적용된 데이터프레임 전달
                 column_config={"완료": st.column_config.CheckboxColumn("✅ 완료", default=False)},
                 use_container_width=True, hide_index=True
             )
@@ -385,11 +393,24 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     elif menu == "🚨 유효기간 임박 경고 (365일 미만)":
         lim_365 = current_date + timedelta(days=365)
         if '유효기간_날짜' in df_inventory.columns:
-            s_exp = df_inventory[(df_inventory['유효기간_날짜'].notna()) & (df_inventory['유효기간_날짜'] <= lim_365) & (df_inventory['재고수량'] > 0) & (~df_inventory['제품명'].str.contains('하모닐란|엔커버', na=False))].sort_values(by='유효기간_날짜')
-            for _, row in s_exp.iterrows():
-                rem_d = (row['유효기간_날짜'] - current_date).days
-                if rem_d < 180: st.error(f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} (**{rem_d}일 남음**)")
-                else: st.warning(f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} ({rem_d}일 남음)")
+            s_exp = df_inventory[
+                (df_inventory['유효기간_날짜'].notna()) & 
+                (df_inventory['유효기간_날짜'] <= lim_365) & 
+                (df_inventory['재고수량'] > 0) & 
+                (~df_inventory['제품명'].str.contains('하모닐란|엔커버', na=False))
+            ].sort_values(by='유효기간_날짜')
+            
+            if s_exp.empty:
+                st.info("✅ 현재 유효기간이 365일 미만으로 임박한 재고 품목이 없습니다.")
+            else:
+                for _, row in s_exp.iterrows():
+                    rem_d = (row['유효기간_날짜'] - current_date).days
+                    if rem_d < 180: 
+                        st.error(f"💥 **[초긴급 - 180일 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} (**{rem_d}일 남음**)")
+                    else: 
+                        st.warning(f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} ({rem_d}일 남음)")
+        else:
+            st.error("⚠️ 재고 데이터에서 '유효기간' 정보 열을 찾을 수 없습니다.")
 
     elif menu == "📦 장기 미출고 재고 (90일 이상)":
         if not df_orders.empty and '출고일자' in df_orders.columns:
