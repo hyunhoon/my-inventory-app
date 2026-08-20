@@ -171,11 +171,16 @@ st.set_page_config(page_title="의약품 창고 및 주문 통합 분석 시스�
 
 st.success("✨ **[구글 시트 연동 완료]** 데이터가 클라우드 구글 시트에 영구 보존됩니다.")
 
+# 데이터 초기화 및 보존
 if "order_list" not in st.session_state:
     st.session_state.order_list = load_saved_orders()
 elif "완료" not in st.session_state.order_list.columns:
     st.session_state.order_list.insert(0, "완료", False)
     save_current_orders(st.session_state.order_list)
+
+# 임의의 신규 품목 저장을 위한 세션 리스트 생성 (드롭다운 에러 방지용)
+if "custom_products" not in st.session_state:
+    st.session_state.custom_products = []
 
 # 열 누락(KeyError) 방지 2차 체크
 for col in REQUIRED_COLUMNS:
@@ -229,7 +234,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     # 1. 신규 주문 등록 탭
     if menu == "📝 신규 주문 등록":
         existing_customers = sorted(list(set([str(c) for c in df_orders['매출처'].unique() if str(c).strip() not in ['nan', '']])))
+        
+        # [신규품목 에러 해결] 기존재고 + 과거주문 + 커스텀추가품목 + 현재주문내역품목 모두 병합
         all_products = set(df_orders['제품명'].unique()).union(set(df_inventory['제품명'].unique()))
+        if not st.session_state.order_list.empty and "품목" in st.session_state.order_list.columns:
+            all_products = all_products.union(set(st.session_state.order_list['품목'].unique()))
+        all_products = all_products.union(set(st.session_state.custom_products))
+        
         existing_products = sorted(list(set([str(p) for p in all_products if str(p).strip() not in ['nan', '']])))
 
         st.subheader("새로운 주문(수주) 데이터를 입력하세요.")
@@ -246,7 +257,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         st.markdown("### 💊 복수 품목 주문 입력")
         
         prod_sels = st.multiselect("품목을 여러 개 선택하세요", existing_products, key=f"prod_sels_{rc}")
-        new_prod_input = st.text_input("➕ [선택사항] 신규 품목이 있다면 쉼표(,)로 구분하여 입력하세요", key=f"new_prod_input_{rc}")
+        new_prod_input = st.text_input("➕ [선택사항] 완전 신규 품목이 있다면 쉼표(,)로 구분하여 입력하세요", key=f"new_prod_input_{rc}")
 
         selected_prods = list(prod_sels)
         if new_prod_input:
@@ -273,6 +284,13 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if not cust_input: st.error("⚠️ 수주처를 선택 또는 입력해 주세요.")
             elif not order_details: st.error("⚠️ 주문할 품목을 선택하거나 입력해 주세요.")
             else:
+                # [핵심] 상단에서 입력한 신규 품목을 세션 리스트에 영구 저장 (드롭다운 에러 방지)
+                if new_prod_input:
+                    extra_prods = [p.strip() for p in new_prod_input.split(',') if p.strip()]
+                    for p in extra_prods:
+                        if p not in st.session_state.custom_products:
+                            st.session_state.custom_products.append(p)
+
                 new_rows_list = []
                 for item in order_details:
                     shortage = item["수량"] - item["재고량"]
@@ -293,7 +311,17 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 st.rerun()
 
         st.markdown("---")
-        st.markdown("### 📋 등록된 주문 내역 요약 (품목/수량/재고량/특이사항 수정 가능)")
+        
+        # [신규 추가 UI] 표에서 품목을 아예 새로운 걸로 수정하고 싶을 때 쓰는 도구
+        col_t1, col_t2 = st.columns([6, 4])
+        with col_t1:
+            st.markdown("### 📋 등록된 주문 내역 요약 (내용 수정 가능)")
+        with col_t2:
+            st.info("💡 드롭다운(선택창)에 없는 완전 신규 품목 추가하기")
+            new_dd_item = st.text_input("새 품목명 입력 후 [엔터]를 치면 드롭다운에 추가됩니다.", key="new_dd_item_input")
+            if new_dd_item and new_dd_item.strip() not in st.session_state.custom_products:
+                st.session_state.custom_products.append(new_dd_item.strip())
+                st.rerun()
         
         if not st.session_state.order_list.empty:
             # 기존 데이터를 안전하게 수치화
@@ -323,12 +351,12 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             df_display['부족량'] = df_display.apply(format_shortage, axis=1)
 
-            # --- [편집 가능한 데이터 테이블 (품목을 드롭다운으로 변경)] ---
+            # --- [편집 가능한 데이터 테이블] ---
             edited_df = st.data_editor(
                 df_display, 
                 column_config={
                     "완료": st.column_config.CheckboxColumn("✅ 완료", default=False),
-                    "품목": st.column_config.SelectboxColumn("품목", options=existing_products, required=True), # Selectbox로 변경 적용
+                    "품목": st.column_config.SelectboxColumn("품목", options=existing_products, required=True), 
                     "수량": st.column_config.NumberColumn("수량", min_value=0, format="%d"),
                     "재고량": st.column_config.NumberColumn("재고량", min_value=0, format="%d"),
                     "특이사항": st.column_config.TextColumn("특이사항"),
@@ -458,7 +486,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     else: 
                         st.warning(f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} ({rem_d}일 남음)")
         else:
-            st.error("⚠️ 재고 데이터에서 '유효기간' 정보 열을 찾을 수 없습니다.")
+            st.error("⚠️ 재고 데이터에서 '유효기간' 정보 열을 찾을 수 정할 수 없습니다.")
 
     elif menu == "📦 장기 미출고 재고 (90일 이상)":
         if not df_orders.empty and '출고일자' in df_orders.columns:
