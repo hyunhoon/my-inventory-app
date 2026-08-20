@@ -11,7 +11,7 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- [필수 컬럼 정의] ---
+# --- [필수 컬럼 정의 (열 순서 고정)] ---
 REQUIRED_COLUMNS = ["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"]
 
 # --- [구글 시트 연동 설정] ---
@@ -293,24 +293,26 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 st.rerun()
 
         st.markdown("---")
-        st.markdown("### 📋 등록된 주문 내역 요약 (수량/특이사항 수정 가능)")
+        st.markdown("### 📋 등록된 주문 내역 요약 (품목/수량/재고량/특이사항 수정 가능)")
         
         if not st.session_state.order_list.empty:
-            # 데이터 수치화 안전 처리
+            # 기존 데이터를 안전하게 수치화 (재고량 자동 덮어쓰기 기능 해제)
             st.session_state.order_list['수량'] = pd.to_numeric(st.session_state.order_list['수량'], errors='coerce').fillna(0).astype(int)
-            stock_map = df_inventory.groupby('제품명')['재고수량'].sum().to_dict()
-            st.session_state.order_list['재고량'] = st.session_state.order_list['품목'].map(stock_map).fillna(0).astype(int)
+            st.session_state.order_list['재고량'] = pd.to_numeric(st.session_state.order_list['재고량'], errors='coerce').fillna(0).astype(int)
             
             df_display = st.session_state.order_list.copy()
             
-            # 최초주문일 기준 정렬
+            # 최초주문일 기준 정렬을 통해 보기 편하게 구성
             if "수주처" in df_display.columns and "주문일" in df_display.columns and not df_display.empty:
                 min_dates = df_display.groupby("수주처")["주문일"].min().reset_index()
                 min_dates.columns = ["수주처", "최초주문일"]
                 df_display = pd.merge(df_display, min_dates, on="수주처", how="left")
                 df_display = df_display.sort_values(by=["최초주문일", "수주처", "주문일"]).drop(columns=["최초주문일"]).reset_index(drop=True)
 
-            # 부족량 텍스트 이모지 변환 (Styler 미사용으로 편집 기능 충돌 방지)
+            # [핵심] 출력 시 강제로 열 순서 재배치 (수주처 -> 품목 순서 보장)
+            df_display = df_display[REQUIRED_COLUMNS]
+
+            # 부족량 텍스트 이모지 변환 
             def format_shortage(row):
                 try:
                     qty = int(float(row['수량']))
@@ -323,17 +325,19 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             df_display['부족량'] = df_display.apply(format_shortage, axis=1)
 
             # --- [편집 가능한 데이터 테이블] ---
-            # Styler 없이 순수 Dataframe을 사용하여 수정 가능하게 열어둡니다.
+            # 품목과 재고량도 직접 수정할 수 있도록 disabled 항목에서 제거했습니다.
             edited_df = st.data_editor(
                 df_display, 
                 column_config={
                     "완료": st.column_config.CheckboxColumn("✅ 완료", default=False),
+                    "품목": st.column_config.TextColumn("품목"),
                     "수량": st.column_config.NumberColumn("수량", min_value=0, format="%d"),
+                    "재고량": st.column_config.NumberColumn("재고량", min_value=0, format="%d"),
                     "특이사항": st.column_config.TextColumn("특이사항"),
                     "부족량": st.column_config.TextColumn("부족량", disabled=True)
                 },
-                # 편집 불가능한 항목 (수량과 특이사항, 완료 체크만 가능)
-                disabled=["주문일", "수주처", "품목", "재고량", "부족량"], 
+                # 수정 불가능한 항목 (주문일, 수주처, 부족량만 막아둠)
+                disabled=["주문일", "수주처", "부족량"], 
                 use_container_width=True, 
                 hide_index=True
             )
@@ -348,9 +352,10 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 shortage_calc = edited_df['수량'] - edited_df['재고량']
                 edited_df['부족량'] = shortage_calc.apply(lambda x: int(x) if x > 0 else 0)
                 
-                st.session_state.order_list = edited_df
+                # 강제 정렬된 상태로 세션 및 시트에 저장
+                st.session_state.order_list = edited_df[REQUIRED_COLUMNS]
                 save_current_orders(st.session_state.order_list)
-                st.rerun() # 새로고침하여 바뀐 부족량 이모지 즉시 반영
+                st.rerun()
             
             completed_rows = edited_df[edited_df["완료"] == True]
             
