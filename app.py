@@ -296,23 +296,22 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         st.markdown("### 📋 등록된 주문 내역 요약 (품목/수량/재고량/특이사항 수정 가능)")
         
         if not st.session_state.order_list.empty:
-            # 기존 데이터를 안전하게 수치화 (재고량 자동 덮어쓰기 기능 해제)
+            # 기존 데이터를 안전하게 수치화
             st.session_state.order_list['수량'] = pd.to_numeric(st.session_state.order_list['수량'], errors='coerce').fillna(0).astype(int)
             st.session_state.order_list['재고량'] = pd.to_numeric(st.session_state.order_list['재고량'], errors='coerce').fillna(0).astype(int)
             
             df_display = st.session_state.order_list.copy()
             
-            # 최초주문일 기준 정렬을 통해 보기 편하게 구성
+            # 최초주문일 기준 정렬
             if "수주처" in df_display.columns and "주문일" in df_display.columns and not df_display.empty:
                 min_dates = df_display.groupby("수주처")["주문일"].min().reset_index()
                 min_dates.columns = ["수주처", "최초주문일"]
                 df_display = pd.merge(df_display, min_dates, on="수주처", how="left")
                 df_display = df_display.sort_values(by=["최초주문일", "수주처", "주문일"]).drop(columns=["최초주문일"]).reset_index(drop=True)
 
-            # [핵심] 출력 시 강제로 열 순서 재배치 (수주처 -> 품목 순서 보장)
+            # 열 순서 고정
             df_display = df_display[REQUIRED_COLUMNS]
 
-            # 부족량 텍스트 이모지 변환 
             def format_shortage(row):
                 try:
                     qty = int(float(row['수량']))
@@ -324,19 +323,17 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             df_display['부족량'] = df_display.apply(format_shortage, axis=1)
 
-            # --- [편집 가능한 데이터 테이블] ---
-            # 품목과 재고량도 직접 수정할 수 있도록 disabled 항목에서 제거했습니다.
+            # --- [편집 가능한 데이터 테이블 (품목을 드롭다운으로 변경)] ---
             edited_df = st.data_editor(
                 df_display, 
                 column_config={
                     "완료": st.column_config.CheckboxColumn("✅ 완료", default=False),
-                    "품목": st.column_config.TextColumn("품목"),
+                    "품목": st.column_config.SelectboxColumn("품목", options=existing_products, required=True), # Selectbox로 변경 적용
                     "수량": st.column_config.NumberColumn("수량", min_value=0, format="%d"),
                     "재고량": st.column_config.NumberColumn("재고량", min_value=0, format="%d"),
                     "특이사항": st.column_config.TextColumn("특이사항"),
                     "부족량": st.column_config.TextColumn("부족량", disabled=True)
                 },
-                # 수정 불가능한 항목 (주문일, 수주처, 부족량만 막아둠)
                 disabled=["주문일", "수주처", "부족량"], 
                 use_container_width=True, 
                 hide_index=True
@@ -344,6 +341,14 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             # 변경사항이 감지되면 원본 데이터에 반영 후 자동 재계산
             if not edited_df.equals(df_display):
+                
+                # [스마트 기능] 사용자가 품목을 다른 것으로 수정하면 재고량을 새 품목에 맞게 자동 업데이트
+                for idx in edited_df.index:
+                    if edited_df.at[idx, '품목'] != df_display.at[idx, '품목']:
+                        new_prod = edited_df.at[idx, '품목']
+                        new_stock = df_inventory[df_inventory['제품명'] == new_prod]['재고수량'].sum()
+                        edited_df.at[idx, '재고량'] = int(new_stock)
+
                 # 숫자형태로 정리
                 edited_df['수량'] = pd.to_numeric(edited_df['수량'], errors='coerce').fillna(0).astype(int)
                 edited_df['재고량'] = pd.to_numeric(edited_df['재고량'], errors='coerce').fillna(0).astype(int)
