@@ -284,7 +284,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             if not cust_input: st.error("⚠️ 수주처를 선택 또는 입력해 주세요.")
             elif not order_details: st.error("⚠️ 주문할 품목을 선택하거나 입력해 주세요.")
             else:
-                # [핵심] 상단에서 입력한 신규 품목을 세션 리스트에 영구 저장 (드롭다운 에러 방지)
                 if new_prod_input:
                     extra_prods = [p.strip() for p in new_prod_input.split(',') if p.strip()]
                     for p in extra_prods:
@@ -312,21 +311,38 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
 
         st.markdown("---")
         
-        # [신규 추가 UI] 표에서 품목을 아예 새로운 걸로 수정하고 싶을 때 쓰는 도구
         col_t1, col_t2 = st.columns([6, 4])
         with col_t1:
             st.markdown("### 📋 등록된 주문 내역 요약 (내용 수정 가능)")
         with col_t2:
-            st.info("💡 드롭다운(선택창)에 없는 완전 신규 품목 추가하기")
+            st.info("💡 드롭다운(선택창)에 없는 신규 품목 추가하기")
             new_dd_item = st.text_input("새 품목명 입력 후 [엔터]를 치면 드롭다운에 추가됩니다.", key="new_dd_item_input")
             if new_dd_item and new_dd_item.strip() not in st.session_state.custom_products:
                 st.session_state.custom_products.append(new_dd_item.strip())
                 st.rerun()
         
         if not st.session_state.order_list.empty:
-            # 기존 데이터를 안전하게 수치화
             st.session_state.order_list['수량'] = pd.to_numeric(st.session_state.order_list['수량'], errors='coerce').fillna(0).astype(int)
-            st.session_state.order_list['재고량'] = pd.to_numeric(st.session_state.order_list['재고량'], errors='coerce').fillna(0).astype(int)
+            
+            # 🌟 [문제 해결의 핵심!!] 현재 재고데이터.xls의 최신 재고량으로 주문 목록의 재고량을 실시간 강제 동기화
+            is_updated = False
+            for idx in st.session_state.order_list.index:
+                prod = st.session_state.order_list.at[idx, '품목']
+                if pd.notna(prod) and str(prod).strip() != "":
+                    # 엑셀 파일에서 해당 품목의 최신 재고량을 다시 불러옵니다.
+                    latest_stock = int(df_inventory[df_inventory['제품명'] == str(prod).strip()]['재고수량'].sum())
+                    current_qty = int(st.session_state.order_list.at[idx, '수량'])
+                    
+                    # 기존에 기록된 재고량과 최신 엑셀 재고량이 다르면 업데이트 진행
+                    if st.session_state.order_list.at[idx, '재고량'] != latest_stock:
+                        st.session_state.order_list.at[idx, '재고량'] = latest_stock
+                        shortage = current_qty - latest_stock
+                        st.session_state.order_list.at[idx, '부족량'] = shortage if shortage > 0 else 0
+                        is_updated = True
+            
+            # 변경된 내역이 있다면 구글 시트에도 최신 상태로 덮어쓰기
+            if is_updated:
+                save_current_orders(st.session_state.order_list)
             
             df_display = st.session_state.order_list.copy()
             
@@ -337,7 +353,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_display = pd.merge(df_display, min_dates, on="수주처", how="left")
                 df_display = df_display.sort_values(by=["최초주문일", "수주처", "주문일"]).drop(columns=["최초주문일"]).reset_index(drop=True)
 
-            # 열 순서 고정
             df_display = df_display[REQUIRED_COLUMNS]
 
             def format_shortage(row):
@@ -351,7 +366,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             df_display['부족량'] = df_display.apply(format_shortage, axis=1)
 
-            # --- [편집 가능한 데이터 테이블] ---
+            # 편집 가능한 데이터 테이블
             edited_df = st.data_editor(
                 df_display, 
                 column_config={
@@ -367,25 +382,19 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 hide_index=True
             )
             
-            # 변경사항이 감지되면 원본 데이터에 반영 후 자동 재계산
             if not edited_df.equals(df_display):
-                
-                # [스마트 기능] 사용자가 품목을 다른 것으로 수정하면 재고량을 새 품목에 맞게 자동 업데이트
                 for idx in edited_df.index:
                     if edited_df.at[idx, '품목'] != df_display.at[idx, '품목']:
                         new_prod = edited_df.at[idx, '품목']
                         new_stock = df_inventory[df_inventory['제품명'] == new_prod]['재고수량'].sum()
                         edited_df.at[idx, '재고량'] = int(new_stock)
 
-                # 숫자형태로 정리
                 edited_df['수량'] = pd.to_numeric(edited_df['수량'], errors='coerce').fillna(0).astype(int)
                 edited_df['재고량'] = pd.to_numeric(edited_df['재고량'], errors='coerce').fillna(0).astype(int)
                 
-                # 원본 저장을 위한 부족량 순수 숫자화 재계산
                 shortage_calc = edited_df['수량'] - edited_df['재고량']
                 edited_df['부족량'] = shortage_calc.apply(lambda x: int(x) if x > 0 else 0)
                 
-                # 강제 정렬된 상태로 세션 및 시트에 저장
                 st.session_state.order_list = edited_df[REQUIRED_COLUMNS]
                 save_current_orders(st.session_state.order_list)
                 st.rerun()
