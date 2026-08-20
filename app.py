@@ -11,6 +11,9 @@ import pytz
 import gspread
 from google.oauth2.service_account import Credentials
 
+# --- [필수 컬럼 정의] ---
+REQUIRED_COLUMNS = ["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"]
+
 # --- [구글 시트 연동 설정] ---
 def get_gspread_client():
     scopes = [
@@ -29,15 +32,21 @@ def load_saved_orders():
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
+        # 빈 시트일 경우 기본 구조 반환
         if df.empty:
-            return pd.DataFrame(columns=["완료", "주문일", "수주처", "재고량", "부족량", "특이사항"])
+            return pd.DataFrame(columns=REQUIRED_COLUMNS)
             
+        # KeyError 방지: 필수 컬럼이 빠져있다면 강제로 생성
+        for col in REQUIRED_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0 if col in ["수량", "재고량", "부족량"] else ("" if col != "완료" else False)
+                
         if "완료" in df.columns: 
             df["완료"] = df["완료"].astype(str).str.lower() == 'true'
         return df
     except Exception as e:
         st.error(f"구글 시트 연동 오류: {e}")
-        return pd.DataFrame(columns=["완료", "주문일", "수주처", "재고량", "부족량", "특이사항"])
+        return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
 def save_current_orders(df):
     try:
@@ -168,6 +177,11 @@ elif "완료" not in st.session_state.order_list.columns:
     st.session_state.order_list.insert(0, "완료", False)
     save_current_orders(st.session_state.order_list)
 
+# 열 누락(KeyError) 방지 2차 체크
+for col in REQUIRED_COLUMNS:
+    if col not in st.session_state.order_list.columns:
+        st.session_state.order_list[col] = 0 if col in ["수량", "재고량", "부족량"] else ""
+
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
@@ -265,7 +279,8 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     shortage = int(shortage) if shortage > 0 else 0
                     new_rows_list.append({
                         "완료": False, "주문일": order_date.strftime("%m-%d"), "수주처": cust_input,
-                        "재고량": int(item["재고량"]), "부족량": shortage, "특이사항": item["특이사항"]
+                        "품목": item["품목"], "수량": int(item["수량"]), "재고량": int(item["재고량"]),
+                        "부족량": shortage, "특이사항": item["특이사항"]
                     })
                 
                 df_new = pd.DataFrame(new_rows_list)
@@ -278,18 +293,14 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 st.rerun()
 
         st.markdown("---")
-        st.markdown("### 📋 등록된 주문 내역 요약")
+        st.markdown("### 📋 등록된 주문 내역 요약 (수량/특이사항 수정 가능)")
         
         if not st.session_state.order_list.empty:
-            # 기존 데이터를 안전하게 수치화 후 실시간 재고 반영
+            # 데이터 수치화 안전 처리
             st.session_state.order_list['수량'] = pd.to_numeric(st.session_state.order_list['수량'], errors='coerce').fillna(0).astype(int)
             stock_map = df_inventory.groupby('제품명')['재고수량'].sum().to_dict()
             st.session_state.order_list['재고량'] = st.session_state.order_list['품목'].map(stock_map).fillna(0).astype(int)
             
-            # 부족량 갱신 계산
-            shortage_calc = st.session_state.order_list['수량'] - st.session_state.order_list['재고량']
-            st.session_state.order_list['부족량'] = shortage_calc.apply(lambda x: int(x) if x > 0 else 0)
-
             df_display = st.session_state.order_list.copy()
             
             # 최초주문일 기준 정렬
@@ -299,41 +310,47 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                 df_display = pd.merge(df_display, min_dates, on="수주처", how="left")
                 df_display = df_display.sort_values(by=["최초주문일", "수주처", "주문일"]).drop(columns=["최초주문일"]).reset_index(drop=True)
 
-            # --- [이중 안전장치 1: 재고 부족 시각화 텍스트 강제 적용] ---
-            def format_shortage(x):
+            # 부족량 텍스트 이모지 변환 (Styler 미사용으로 편집 기능 충돌 방지)
+            def format_shortage(row):
                 try:
-                    val = int(float(x))
-                    return f"🚨 {val} 부족" if val > 0 else "0"
+                    qty = int(float(row['수량']))
+                    stk = int(float(row['재고량']))
+                    shortage = qty - stk
+                    return f"🚨 {shortage} 부족" if shortage > 0 else "0"
                 except:
-                    if isinstance(x, str) and '🚨' in x: return x
                     return "0"
             
-            df_display['부족량'] = df_display['부족량'].apply(format_shortage)
+            df_display['부족량'] = df_display.apply(format_shortage, axis=1)
 
-            # --- [이중 안전장치 2: 재고 부족량 붉은색 강조 스타일 함수 적용] ---
-            def highlight_shortage(row):
-                val = str(row['부족량'])
-                if '🚨' in val:
-                    return ['background-color: #ffe6e6; color: #cc0000; font-weight: bold'] * len(row)
-                return [''] * len(row)
-
-            styled_df = df_display.style.apply(highlight_shortage, axis=1)
-
-            # --- st.data_editor 스타일 풀림 방지를 위해 편집 비활성화(disabled) 명시 ---
+            # --- [편집 가능한 데이터 테이블] ---
+            # Styler 없이 순수 Dataframe을 사용하여 수정 가능하게 열어둡니다.
             edited_df = st.data_editor(
-                styled_df, 
+                df_display, 
                 column_config={
                     "완료": st.column_config.CheckboxColumn("✅ 완료", default=False),
-                    "부족량": st.column_config.TextColumn("부족량")
+                    "수량": st.column_config.NumberColumn("수량", min_value=0, format="%d"),
+                    "특이사항": st.column_config.TextColumn("특이사항"),
+                    "부족량": st.column_config.TextColumn("부족량", disabled=True)
                 },
-                disabled=["주문일", "수주처", "품목", "수량", "재고량", "부족량"], # 편집 못하게 묶어야 스타일 유지됨
+                # 편집 불가능한 항목 (수량과 특이사항, 완료 체크만 가능)
+                disabled=["주문일", "수주처", "품목", "재고량", "부족량"], 
                 use_container_width=True, 
                 hide_index=True
             )
             
+            # 변경사항이 감지되면 원본 데이터에 반영 후 자동 재계산
             if not edited_df.equals(df_display):
+                # 숫자형태로 정리
+                edited_df['수량'] = pd.to_numeric(edited_df['수량'], errors='coerce').fillna(0).astype(int)
+                edited_df['재고량'] = pd.to_numeric(edited_df['재고량'], errors='coerce').fillna(0).astype(int)
+                
+                # 원본 저장을 위한 부족량 순수 숫자화 재계산
+                shortage_calc = edited_df['수량'] - edited_df['재고량']
+                edited_df['부족량'] = shortage_calc.apply(lambda x: int(x) if x > 0 else 0)
+                
                 st.session_state.order_list = edited_df
                 save_current_orders(st.session_state.order_list)
+                st.rerun() # 새로고침하여 바뀐 부족량 이모지 즉시 반영
             
             completed_rows = edited_df[edited_df["완료"] == True]
             
@@ -346,7 +363,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                         st.rerun()
             with col_btn2:
                 if st.button("🚨 요약 내역 전체 초기화"):
-                    st.session_state.order_list = pd.DataFrame(columns=["완료", "주문일", "수주처", "품목", "수량", "재고량", "부족량", "특이사항"])
+                    st.session_state.order_list = pd.DataFrame(columns=REQUIRED_COLUMNS)
                     save_current_orders(st.session_state.order_list)
                     st.rerun()
         else: 
