@@ -324,29 +324,24 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
         if not st.session_state.order_list.empty:
             st.session_state.order_list['수량'] = pd.to_numeric(st.session_state.order_list['수량'], errors='coerce').fillna(0).astype(int)
             
-            # 🌟 [문제 해결의 핵심!!] 현재 재고데이터.xls의 최신 재고량으로 주문 목록의 재고량을 실시간 강제 동기화
             is_updated = False
             for idx in st.session_state.order_list.index:
                 prod = st.session_state.order_list.at[idx, '품목']
                 if pd.notna(prod) and str(prod).strip() != "":
-                    # 엑셀 파일에서 해당 품목의 최신 재고량을 다시 불러옵니다.
                     latest_stock = int(df_inventory[df_inventory['제품명'] == str(prod).strip()]['재고수량'].sum())
                     current_qty = int(st.session_state.order_list.at[idx, '수량'])
                     
-                    # 기존에 기록된 재고량과 최신 엑셀 재고량이 다르면 업데이트 진행
                     if st.session_state.order_list.at[idx, '재고량'] != latest_stock:
                         st.session_state.order_list.at[idx, '재고량'] = latest_stock
                         shortage = current_qty - latest_stock
                         st.session_state.order_list.at[idx, '부족량'] = shortage if shortage > 0 else 0
                         is_updated = True
             
-            # 변경된 내역이 있다면 구글 시트에도 최신 상태로 덮어쓰기
             if is_updated:
                 save_current_orders(st.session_state.order_list)
             
             df_display = st.session_state.order_list.copy()
             
-            # 최초주문일 기준 정렬
             if "수주처" in df_display.columns and "주문일" in df_display.columns and not df_display.empty:
                 min_dates = df_display.groupby("수주처")["주문일"].min().reset_index()
                 min_dates.columns = ["수주처", "최초주문일"]
@@ -366,7 +361,6 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
             
             df_display['부족량'] = df_display.apply(format_shortage, axis=1)
 
-            # 편집 가능한 데이터 테이블
             edited_df = st.data_editor(
                 df_display, 
                 column_config={
@@ -495,7 +489,7 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
                     else: 
                         st.warning(f"⚠️ **[주의 - 1년 미만]** **{row['제품명']}** ({row['재고수량']:.0f}개) • 유효기간: {row['유효기간_표시']} ({rem_d}일 남음)")
         else:
-            st.error("⚠️ 재고 데이터에서 '유효기간' 정보 열을 찾을 수 정할 수 없습니다.")
+            st.error("⚠️ 재고 데이터에서 '유효기간' 정보 열을 찾을 수 없습니다.")
 
     elif menu == "📦 장기 미출고 재고 (90일 이상)":
         if not df_orders.empty and '출고일자' in df_orders.columns:
@@ -518,23 +512,24 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     elif menu == "📋 창고 전체 현재 재고 현황":
         p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
         
-        all_prods = sorted(list(set(df_inventory['제품명'].unique()) | set(df_orders['제품명'].unique())))
-        all_prods = [p for p in all_prods if str(p).strip() != '']
-        
-        df_all = pd.DataFrame({'제품명': all_prods})
-        df_inv_info = df_inventory[['제품명', '재고수량', '유효기간_표시']].drop_duplicates(subset=['제품명'])
-        
-        df_f = pd.merge(df_all, df_inv_info, on='제품명', how='left')
-        df_f['재고수량'] = df_f['재고수량'].fillna(0)
-        df_f['유효기간_표시'] = df_f['유효기간_표시'].fillna('기록없음')
+        # 품목명 기준 중복 제거(drop_duplicates)를 제거하여, 동일 품목의 서로 다른 유효기간(배치)별 재고를 모두 표시
+        df_inv_info = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
+        df_inv_info['재고수량'] = df_inv_info['재고수량'].fillna(0)
+        df_inv_info['유효기간_표시'] = df_inv_info['유효기간_표시'].fillna('기록없음')
         
         if p_search: 
-            df_f = df_f[df_f['제품명'].str.contains(p_search, case=False, na=False)]
+            df_inv_info = df_inv_info[df_inv_info['제품명'].str.contains(p_search, case=False, na=False)]
             
-        df_f.insert(0, "선택", False)
-        df_f['선택'] = df_f['제품명'] == st.session_state.get('selected_product')
-        edited_df = st.data_editor(df_f, column_config={"선택": st.column_config.CheckboxColumn(required=True)}, use_container_width=True, hide_index=True)
-        changed = edited_df[edited_df['선택'] != df_f['선택']]
+        df_inv_info = df_inv_info.sort_values(by=['제품명', '유효기간_표시']).reset_index(drop=True)
+        df_inv_info.insert(0, "선택", False)
+        
+        edited_df = st.data_editor(
+            df_inv_info, 
+            column_config={"선택": st.column_config.CheckboxColumn(required=True)}, 
+            use_container_width=True, 
+            hide_index=True
+        )
+        changed = edited_df[edited_df['선택'] != df_inv_info['선택']]
         
         if not changed.empty:
             new_checked = changed[changed['선택'] == True]
