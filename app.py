@@ -512,15 +512,34 @@ if os.path.exists(ORDER_FILE) and os.path.exists(INVENTORY_FILE):
     elif menu == "📋 창고 전체 현재 재고 현황":
         p_search = st.text_input("🔍 제품명 검색:", "", key="p_search_t5")
         
-        # 품목명 기준 중복 제거(drop_duplicates)를 제거하여, 동일 품목의 서로 다른 유효기간(배치)별 재고를 모두 표시
-        df_inv_info = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy()
-        df_inv_info['재고수량'] = df_inv_info['재고수량'].fillna(0)
-        df_inv_info['유효기간_표시'] = df_inv_info['유효기간_표시'].fillna('기록없음')
-        
+        # 1. 인벤토리에 있는 모든 행(유효기간별) 가져오기
+        df_inv_all = df_inventory[['제품명', '재고수량', '유효기간_표시']].copy() if '유효기간_표시' in df_inventory.columns else df_inventory[['제품명', '재고수량']].copy()
+        df_inv_all['재고수량'] = df_inv_all['재고수량'].fillna(0)
+        if '유효기간_표시' not in df_inv_all.columns:
+            df_inv_all['유효기간_표시'] = '기록없음'
+        else:
+            df_inv_all['유효기간_표시'] = df_inv_all['유효기간_표시'].fillna('기록없음')
+
+        # 2. 출고데이터(주문)나 전체 품목 중 인벤토리에 누락된 품목(재고 0이 된 품목 등)도 포함시키기 위해 병합
+        all_prods = sorted(list(set(df_inventory['제품명'].unique()) | set(df_orders['제품명'].unique())))
+        all_prods = [p for p in all_prods if str(p).strip() != '']
+
+        existing_inv_prods = df_inv_all['제품명'].unique()
+        missing_prods = [p for p in all_prods if p not in existing_inv_prods]
+
+        if missing_prods:
+            df_missing = pd.DataFrame({
+                '제품명': missing_prods,
+                '재고수량': 0,
+                '유효기간_표시': '기록없음'
+            })
+            df_inv_all = pd.concat([df_inv_all, df_missing], ignore_index=True)
+
+        df_inv_info = df_inv_all.sort_values(by=['제품명', '유효기간_표시']).reset_index(drop=True)
+
         if p_search: 
             df_inv_info = df_inv_info[df_inv_info['제품명'].str.contains(p_search, case=False, na=False)]
             
-        df_inv_info = df_inv_info.sort_values(by=['제품명', '유효기간_표시']).reset_index(drop=True)
         df_inv_info.insert(0, "선택", False)
         
         edited_df = st.data_editor(
